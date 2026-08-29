@@ -1,0 +1,9 @@
+{
+  "schema_version": "pcss.verifier-fixture/v1",
+  "evidence_class": "OFFLINE_FIXTURE",
+  "purpose": "Protocol-only correction/bonus and mutable-state comparison fixture; not a target backend gate.",
+  "cases": [
+    {"case_id": "all-accepted-with-bonus", "draft_tokens": [11, 12], "target_tokens": [11, 12, 13], "expected_committed_tokens": [11, 12, 13], "include_bonus_on_full_accept": true},
+    {"case_id": "rejection-at-position-one", "draft_tokens": [11, 99, 13], "target_tokens": [11, 12, 13], "expected_committed_tokens": [11, 12], "include_bonus_on_full_accept": false}
+  ]
+}
