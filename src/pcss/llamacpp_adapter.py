@@ -315,9 +315,9 @@ def _validate_capabilities(capabilities: dict[str, Any], config: _BridgeConfig, 
 
     full_state = _require_mapping(capabilities["full_state"], "pcss_llama_bridge capabilities.full_state")
     _require_exact_keys(full_state, _CAPABILITY_FULL_STATE_FIELDS, "pcss_llama_bridge capabilities.full_state")
-    if full_state["snapshot_api"] != "llama_state_seq_get_data":
+    if full_state["snapshot_api"] != "llama_state_get_data":
         raise ContractError("pcss_llama_bridge does not declare full-state snapshot support")
-    if full_state["restore_api"] != "llama_state_seq_set_data":
+    if full_state["restore_api"] != "llama_state_set_data":
         raise ContractError("pcss_llama_bridge does not declare full-state restore support")
     if full_state["comparison"] != "byte_exact":
         raise ContractError("pcss_llama_bridge full-state comparison is not byte exact")
@@ -379,7 +379,6 @@ def _request_for_case(config: _BridgeConfig, case: VerifierCase) -> dict[str, An
             "case_id": case.case_id,
             "initial_context_tokens": list(_tokens_from_case(case)),
             "draft_tokens": list(case.draft_tokens),
-            "target_tokens": list(case.target_tokens),
             "k": case.k,
             "include_bonus_on_full_accept": case.include_bonus_on_full_accept,
         },

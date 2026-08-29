@@ -64,8 +64,8 @@ def _capabilities(
             "model_artifact_sha256": _sha256(model),
         },
         "full_state": {
-            "snapshot_api": "llama_state_seq_get_data",
-            "restore_api": "llama_state_seq_set_data",
+            "snapshot_api": "llama_state_get_data",
+            "restore_api": "llama_state_set_data",
             "comparison": comparison,
             "covered_components": ["llama_state", "logits", "token_history", "positions"],
         },
@@ -337,6 +337,7 @@ def test_verify_passes_strict_case_request_and_maps_outcome(tmp_path: Path, monk
     assert outcome.committed_tokens == (7, 8)
     assert request["operation"] == "verify_case"
     assert request["case"]["draft_tokens"] == [7, 9]
+    assert "target_tokens" not in request["case"]
     assert "expected_state_digest" not in request["case"]
 
 
