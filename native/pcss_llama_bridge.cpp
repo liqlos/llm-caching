@@ -972,7 +972,7 @@ SeedSpec parse_seed(const Json::Object & request, bool require_steps) {
     result.seed_id = required_string(seed, "seed_id");
     result.initial_context_tokens = required_tokens(seed, "initial_context_tokens");
     if (require_steps) {
-        result.steps = required_u32(seed, "steps", 1U);
+        result.steps = required_u32(seed, "steps", 0U);
     }
     return result;
 }

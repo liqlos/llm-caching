@@ -102,7 +102,9 @@ sampler_rng_state: "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1".
 
 initial_context_tokens are raw token IDs. The bridge applies no tokenizer,
 chat template, or thinking-mode policy. It serially chooses exactly steps
-tokens by greedy argmax, breaking equal logits by lowest token ID.
+tokens by greedy argmax, breaking equal logits by lowest token ID. steps may be
+zero, in which case target_tokens is empty and the completion state is the
+prompt state.
 
 The successful response uses pcss.llama-bridge-reference/v1 and contains:
 
