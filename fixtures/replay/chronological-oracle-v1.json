@@ -1,0 +1,110 @@
+[
+  {
+    "schema_version": "pcss.trace/v1",
+    "record_id": "history-repo-a",
+    "timestamp_ns": 10,
+    "chronological_index": 1,
+    "request_id": "request-history",
+    "session_id": "session-history",
+    "trusted_scope": {
+      "scope_class": "same_repository",
+      "principal_namespace": "private/local",
+      "application_id": "pcss-test",
+      "repository_id": "repo-a",
+      "workflow_stage": "edit",
+      "semantic_block_id": "block-a"
+    },
+    "artifact_lineage": {
+      "repository_id": "repo-a",
+      "revision_family": "git",
+      "revision": "rev-1",
+      "parent_revision": null,
+      "path_hash": "path-history",
+      "before_blob": "blob-history",
+      "after_blob": "blob-history-after",
+      "source_span": null
+    },
+    "model_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tokenizer_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "chat_template_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "generation_protocol_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "generation_protocol": {
+      "decoding_mode": "greedy",
+      "thinking_mode": "off",
+      "reasoning_effort": null,
+      "preserve_thinking": false,
+      "schema_or_tool_version": null
+    },
+    "outcome_class": "patch_accepted",
+    "source": {
+      "source_class": "visible_code",
+      "provenance_family": "repository",
+      "eligible_for_persistent_store": true
+    },
+    "privacy": {
+      "privacy_class": "private",
+      "retention_class": "persistent"
+    },
+    "reasoning_retention": "exclude",
+    "record_state": "active",
+    "content": {
+      "prompt_token_ids": [90],
+      "committed_token_ids": [10, 11, 12, 13, 14, 15],
+      "committed_token_status": "complete"
+    }
+  },
+  {
+    "schema_version": "pcss.trace/v1",
+    "record_id": "target-repo-b",
+    "timestamp_ns": 20,
+    "chronological_index": 2,
+    "request_id": "request-target",
+    "session_id": "session-target",
+    "trusted_scope": {
+      "scope_class": "personal_persistent",
+      "principal_namespace": "private/local",
+      "application_id": "pcss-test",
+      "repository_id": "repo-b",
+      "workflow_stage": "edit",
+      "semantic_block_id": "block-b"
+    },
+    "artifact_lineage": {
+      "repository_id": "repo-b",
+      "revision_family": "git",
+      "revision": "rev-2",
+      "parent_revision": null,
+      "path_hash": "path-target",
+      "before_blob": "blob-target",
+      "after_blob": "blob-target-after",
+      "source_span": null
+    },
+    "model_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tokenizer_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "chat_template_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "generation_protocol_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "generation_protocol": {
+      "decoding_mode": "greedy",
+      "thinking_mode": "off",
+      "reasoning_effort": null,
+      "preserve_thinking": false,
+      "schema_or_tool_version": null
+    },
+    "outcome_class": "unknown",
+    "source": {
+      "source_class": "visible_final",
+      "provenance_family": "personal",
+      "eligible_for_persistent_store": true
+    },
+    "privacy": {
+      "privacy_class": "private",
+      "retention_class": "persistent"
+    },
+    "reasoning_retention": "exclude",
+    "record_state": "active",
+    "content": {
+      "prompt_token_ids": [10, 11, 12],
+      "committed_token_ids": [13, 14, 99],
+      "committed_token_status": "complete"
+    }
+  }
+]
