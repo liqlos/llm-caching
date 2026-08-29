@@ -218,20 +218,32 @@ def _observed_binding(adapter: VerifierAdapter, binding: TargetAdapterBinding) -
     }
 
 
-def _authorize_target_backend(
-    adapter: VerifierAdapter, manifest: Mapping[str, Any], host_identity: TargetHostIdentity
-) -> TargetExecutionPermit:
+def _target_binding(adapter: VerifierAdapter) -> TargetAdapterBinding:
     binding_method = getattr(adapter, "target_binding", None)
     if not callable(binding_method):
         raise ContractError("TARGET_BACKEND adapter must expose target_binding()")
     binding = binding_method()
     if not isinstance(binding, TargetAdapterBinding):
         raise ContractError("target_binding() must return TargetAdapterBinding")
+    return binding
 
+
+def capture_target_observation(adapter: VerifierAdapter) -> tuple[TargetHostIdentity, dict[str, str]]:
+    """Capture future target identity and file hashes without calling ``verify()``."""
+
+    binding = _target_binding(adapter)
+    return observe_target_host(), _observed_binding(adapter, binding)
+
+
+def _authorize_target_backend(
+    adapter: VerifierAdapter,
+    manifest: Mapping[str, Any],
+    host_identity: TargetHostIdentity,
+    observed_binding: Mapping[str, str],
+) -> TargetExecutionPermit:
     gate = manifest["verifier_gate"]
     if gate["host_identity"] != host_identity.as_dict():
         raise ContractError("runner-observed host identity differs from manifest.verifier_gate")
-    observed_binding = _observed_binding(adapter, binding)
     if gate["adapter_binding"] != observed_binding:
         raise ContractError("runner-computed adapter/backend/model binding differs from manifest.verifier_gate")
     if manifest["model_artifact"]["sha256"] != observed_binding["model_artifact_sha256"]:
@@ -288,7 +300,8 @@ def execute_suite(
     if availability.execution_class == "TARGET_BACKEND":
         try:
             _require_observed_target_manifest(manifest)
-            permit = _authorize_target_backend(adapter, manifest, observe_target_host())
+            host_identity, observed_binding = capture_target_observation(adapter)
+            permit = _authorize_target_backend(adapter, manifest, host_identity, observed_binding)
         except Exception as error:
             # Authorization errors must leave an auditable NOT_RUN receipt and never call verify().
             harness_receipt = _not_run_receipt(suite, adapter, f"target authorization rejected: {error}")
