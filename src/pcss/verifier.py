@@ -12,8 +12,8 @@ from typing import Literal, Protocol
 
 from .canonical import ContractError, canonical_json, require_int, require_string, sha256
 
-HarnessStatus = Literal["NOT_RUN", "OFFLINE_FIXTURE", "FAILED"]
-ExecutionClass = Literal["NOT_RUN", "OFFLINE_FIXTURE"]
+HarnessStatus = Literal["NOT_RUN", "OFFLINE_FIXTURE", "VERIFIED", "FAILED"]
+ExecutionClass = Literal["NOT_RUN", "OFFLINE_FIXTURE", "TARGET_BACKEND"]
 
 
 def _tokens(value: tuple[int, ...], field: str, *, allow_empty: bool = False) -> None:
@@ -197,7 +197,13 @@ class VerifierHarness:
                 failures.append("mutable_state_mismatch")
             if outcome.accepted_draft_tokens > len(case.draft_tokens):
                 failures.append("accepted_count_out_of_range")
-            status: HarnessStatus = "FAILED" if failures else "OFFLINE_FIXTURE"
+            status: HarnessStatus = (
+                "FAILED"
+                if failures
+                else "VERIFIED"
+                if availability.execution_class == "TARGET_BACKEND"
+                else "OFFLINE_FIXTURE"
+            )
             results.append(
                 CaseResult(
                     case_id=case.case_id,
@@ -210,12 +216,18 @@ class VerifierHarness:
                     failures=tuple(failures),
                 )
             )
-        overall: HarnessStatus = "FAILED" if any(item.status == "FAILED" for item in results) else "OFFLINE_FIXTURE"
+        overall: HarnessStatus = (
+            "FAILED"
+            if any(item.status == "FAILED" for item in results)
+            else "VERIFIED"
+            if availability.execution_class == "TARGET_BACKEND"
+            else "OFFLINE_FIXTURE"
+        )
         return HarnessReceipt(
             suite=suite,
             adapter=self.adapter.name,
             status=overall,
-            execution_class="OFFLINE_FIXTURE",
+            execution_class=availability.execution_class,
             reason=availability.reason,
             cases=tuple(results),
             metadata=metadata or {},
