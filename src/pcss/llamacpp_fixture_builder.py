@@ -37,7 +37,7 @@ from .verifier_runner import observe_target_host
 
 CONFIG_SCHEMA_VERSION = "pcss.llamacpp-adapter-config/v1"
 SEEDS_SCHEMA_VERSION = "pcss.llamacpp-fixture-seeds/v1"
-FIXTURE_SCHEMA_VERSION = "pcss.m4-verifier-cases/v2"
+FIXTURE_SCHEMA_VERSION = "pcss.m4-verifier-cases/v3"
 FIXTURE_PROVENANCE_SCHEMA_VERSION = "pcss.target-verifier-fixture-provenance/v1"
 BRIDGE_REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
 BRIDGE_RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-reference/v1"
@@ -119,11 +119,11 @@ _BRIDGE_OBSERVED_CONTEXT_FIELDS = {
     "actual_n_threads_batch",
 }
 _SUITE_FILENAMES = {
-    "k_sweep": "k-sweep.v2.json",
-    "perfect_draft": "perfect-draft.v2.json",
-    "provider_floor": "provider-floor.v2.json",
-    "forced_rejection": "forced-rejection.v2.json",
-    "long_mixed": "long-mixed.v2.json",
+    "k_sweep": "k-sweep.v3.json",
+    "perfect_draft": "perfect-draft.v3.json",
+    "provider_floor": "provider-floor.v3.json",
+    "forced_rejection": "forced-rejection.v3.json",
+    "long_mixed": "long-mixed.v3.json",
 }
 
 
@@ -489,6 +489,7 @@ def _provenance(*, model_artifact_sha256: str, runtime_configuration_fingerprint
 def _case(
     *,
     case_id: str,
+    seed_id: str,
     context: tuple[int, ...],
     draft_tokens: tuple[int, ...],
     target_tokens: tuple[int, ...],
@@ -504,6 +505,7 @@ def _case(
         raise ContractError("target verifier fixture case must commit at least one token")
     return {
         "case_id": require_string(case_id, "fixture case id"),
+        "seed_id": require_string(seed_id, "fixture seed id"),
         "draft_tokens": list(draft_tokens),
         "target_tokens": list(target_tokens),
         "expected_committed_tokens": list(expected_committed_tokens),
@@ -545,6 +547,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             k_sweep_cases.append(
                 _case(
                     case_id=f"k-sweep:{seed_id}:k={k}",
+                    seed_id=seed_id,
                     context=initial_context,
                     draft_tokens=exact.target_tokens,
                     target_tokens=exact.target_tokens,
@@ -573,6 +576,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             perfect_draft_cases.append(
                 _case(
                     case_id=f"perfect-draft:{seed_id}:k={k}",
+                    seed_id=seed_id,
                     context=initial_context,
                     draft_tokens=with_bonus.target_tokens[:k],
                     target_tokens=with_bonus.target_tokens,
@@ -599,6 +603,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
         provider_floor_cases.append(
             _case(
                 case_id=f"provider-floor:{seed_id}:k={seeds.provider_floor_k}",
+                seed_id=seed_id,
                 context=initial_context,
                 draft_tokens=(provider_wrong,) + provider.target_tokens[1:],
                 target_tokens=provider.target_tokens,
@@ -631,6 +636,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             forced_rejection_cases.append(
                 _case(
                     case_id=f"forced-rejection:{seed_id}:k={seeds.forced_rejection_k}:position={position}",
+                    seed_id=seed_id,
                     context=initial_context,
                     draft_tokens=draft,
                     target_tokens=forced.target_tokens,
@@ -681,6 +687,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
                     f"long-mixed:{seed_id}:context-steps={plan.context_steps}:k={plan.k}:"
                     f"position={plan.rejection_position}"
                 ),
+                seed_id=f"{seed_id}:reconstructed",
                 context=reconstructed_context,
                 draft_tokens=mixed_draft,
                 target_tokens=continuation,

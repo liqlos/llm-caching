@@ -166,7 +166,7 @@ def _build(
     return receipt, config, seeds, fixture_directory, raw_result, report
 
 
-def test_builds_all_v2_fixture_suites_from_real_bridge_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_builds_all_v3_fixture_suites_from_real_bridge_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     receipt, config_path, _, fixture_directory, raw_result, report = _build(tmp_path, monkeypatch=monkeypatch)
     config = load_bridge_config(config_path)
     model_hash = hashlib.sha256((tmp_path / "model.gguf").read_bytes()).hexdigest()
@@ -186,11 +186,11 @@ def test_builds_all_v2_fixture_suites_from_real_bridge_reference(tmp_path: Path,
 
     suite_cases = {}
     for suite, filename in {
-        "k_sweep": "k-sweep.v2.json",
-        "perfect_draft": "perfect-draft.v2.json",
-        "provider_floor": "provider-floor.v2.json",
-        "forced_rejection": "forced-rejection.v2.json",
-        "long_mixed": "long-mixed.v2.json",
+        "k_sweep": "k-sweep.v3.json",
+        "perfect_draft": "perfect-draft.v3.json",
+        "provider_floor": "provider-floor.v3.json",
+        "forced_rejection": "forced-rejection.v3.json",
+        "long_mixed": "long-mixed.v3.json",
     }.items():
         fixture = fixture_directory / filename
         payload = json.loads(fixture.read_text(encoding="utf-8"))
@@ -202,6 +202,11 @@ def test_builds_all_v2_fixture_suites_from_real_bridge_reference(tmp_path: Path,
             "runtime_configuration_fingerprint": config.runtime_configuration_fingerprint,
         }
         suite_cases[suite] = load_cases(fixture)
+
+    assert all(case.seed_id == "alpha" for case in suite_cases["k_sweep"])
+    assert all(case.seed_id == "alpha" for case in suite_cases["perfect_draft"])
+    assert suite_cases["provider_floor"][0].seed_id == "alpha"
+    assert all(case.seed_id == "alpha" for case in suite_cases["forced_rejection"])
 
     assert [case.k for case in suite_cases["k_sweep"]] == [2, 3]
     perfect = suite_cases["perfect_draft"]
@@ -224,6 +229,7 @@ def test_builds_all_v2_fixture_suites_from_real_bridge_reference(tmp_path: Path,
     mixed = suite_cases["long_mixed"]
     assert len(mixed) == 1
     assert len(mixed[0].initial_context_tokens) == 7
+    assert mixed[0].seed_id == "alpha:reconstructed"
     assert mixed[0].draft_tokens[0] == mixed[0].target_tokens[0]
     assert mixed[0].draft_tokens[1] != mixed[0].target_tokens[1]
 

@@ -179,6 +179,7 @@ class VerifierCase:
     include_bonus_on_full_accept: bool = False
     initial_context_tokens: tuple[int, ...] = ()
     reference_provenance: TargetFixtureProvenance | None = None
+    seed_id: str | None = None
 
     def __post_init__(self) -> None:
         require_string(self.case_id, "case.case_id")
@@ -190,6 +191,8 @@ class VerifierCase:
         require_int(self.k, "case.k", minimum=1)
         if not isinstance(self.include_bonus_on_full_accept, bool):
             raise ContractError("case.include_bonus_on_full_accept must be a boolean")
+        if self.seed_id is not None:
+            require_string(self.seed_id, "case.seed_id")
         if self.k != len(self.draft_tokens):
             raise ContractError("case.k must equal the draft token count")
 

@@ -127,6 +127,7 @@ def test_context_bearing_target_fixture_provenance_is_strict() -> None:
     )
     case_with_context = VerifierCase(
         case_id="context",
+        seed_id="raw-seed-alpha",
         initial_context_tokens=(1, 2),
         draft_tokens=(3,),
         target_tokens=(3,),
@@ -136,4 +137,5 @@ def test_context_bearing_target_fixture_provenance_is_strict() -> None:
         reference_provenance=provenance,
     )
     assert case_with_context.initial_context_tokens == (1, 2)
+    assert case_with_context.seed_id == "raw-seed-alpha"
     assert case_with_context.reference_provenance is provenance

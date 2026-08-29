@@ -73,7 +73,8 @@ _CASE_V1_KEYS = {
     "include_bonus_on_full_accept",
 }
 _CASE_V2_KEYS = _CASE_V1_KEYS | {"initial_context_tokens"}
-_FIXTURE_V2_KEYS = {"schema_version", "provenance", "cases"}
+_CASE_V3_KEYS = _CASE_V2_KEYS | {"seed_id"}
+_FIXTURE_TARGET_KEYS = {"schema_version", "provenance", "cases"}
 
 
 def _case(
@@ -82,14 +83,22 @@ def _case(
     schema_version: str,
     provenance: TargetFixtureProvenance | None,
 ) -> VerifierCase:
-    required = _CASE_V1_KEYS if schema_version == "pcss.m4-verifier-cases/v1" else _CASE_V2_KEYS
+    if schema_version == "pcss.m4-verifier-cases/v1":
+        required = _CASE_V1_KEYS
+    elif schema_version == "pcss.m4-verifier-cases/v2":
+        required = _CASE_V2_KEYS
+    else:
+        required = _CASE_V3_KEYS
     if set(payload) != required:
         raise ContractError("verifier case has missing or unknown fields")
     initial_context_tokens = ()
-    if schema_version == "pcss.m4-verifier-cases/v2":
+    seed_id: str | None = None
+    if schema_version in {"pcss.m4-verifier-cases/v2", "pcss.m4-verifier-cases/v3"}:
         initial_context_tokens = tuple(payload["initial_context_tokens"])
         if not initial_context_tokens:
-            raise ContractError("v2 verifier cases require a non-empty initial_context_tokens sequence")
+            raise ContractError("target verifier cases require a non-empty initial_context_tokens sequence")
+    if schema_version == "pcss.m4-verifier-cases/v3":
+        seed_id = require_string(payload["seed_id"], "v3 verifier case.seed_id")
     return VerifierCase(
         case_id=payload["case_id"],
         draft_tokens=tuple(payload["draft_tokens"]),
@@ -100,6 +109,7 @@ def _case(
         include_bonus_on_full_accept=payload["include_bonus_on_full_accept"],
         initial_context_tokens=initial_context_tokens,
         reference_provenance=provenance,
+        seed_id=seed_id,
     )
 
 
@@ -132,11 +142,11 @@ def load_cases(path: Path) -> tuple[VerifierCase, ...]:
     provenance: TargetFixtureProvenance | None = None
     if schema_version == "pcss.m4-verifier-cases/v1":
         require_exact_keys(payload, {"schema_version", "cases"}, "verifier fixture")
-    elif schema_version == "pcss.m4-verifier-cases/v2":
-        require_exact_keys(payload, _FIXTURE_V2_KEYS, "verifier fixture")
+    elif schema_version in {"pcss.m4-verifier-cases/v2", "pcss.m4-verifier-cases/v3"}:
+        require_exact_keys(payload, _FIXTURE_TARGET_KEYS, "verifier fixture")
         provenance = _fixture_provenance(require_mapping(payload["provenance"], "verifier fixture provenance"))
     else:
-        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1 or v2")
+        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1, v2, or v3")
     if not isinstance(payload["cases"], list) or not payload["cases"]:
         raise ContractError("verifier fixture must contain at least one case")
     cases = tuple(
@@ -326,6 +336,8 @@ def _require_fixture_target_compatibility(
         raise ContractError("target fixture model fingerprint differs from runner-observed model artifact")
     if provenance.runtime_configuration_fingerprint != observed_binding["runtime_configuration_fingerprint"]:
         raise ContractError("target fixture runtime configuration differs from runner-observed binding")
+    if any(case.seed_id is None for case in cases):
+        raise ContractError("target fixture cases require an explicit seed_id")
 
 
 def _not_run_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
