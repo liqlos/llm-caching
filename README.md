@@ -40,15 +40,15 @@ temporary archive readback, and logical capacity simulator. It writes a
 or timing measurement.
 
 ```sh
-PCSS_REVISION="$(git rev-parse HEAD)"
 PYTHONPATH=src python3 -m pcss.offline_runner \
   --fixture fixtures/replay/chronological-oracle-v1.json \
   --rfc /Users/aleksei/Downloads/PCSS_MASTER_RFC_EN.md \
   --output artifacts/offline/chronological-oracle.raw.json \
-  --report artifacts/offline/chronological-oracle.report.md \
-  --git-revision "$PCSS_REVISION" \
-  --exact-command 'PYTHONPATH=src python3 -m pcss.offline_runner --fixture fixtures/replay/chronological-oracle-v1.json --rfc /Users/aleksei/Downloads/PCSS_MASTER_RFC_EN.md --output artifacts/offline/chronological-oracle.raw.json --report artifacts/offline/chronological-oracle.report.md --git-revision <exact-git-revision> --exact-command <this-command>'
+  --report artifacts/offline/chronological-oracle.report.md
 ```
 
-The source RFC stays outside this repository; obtain it at the user-supplied
-path and use the command with its absolute path when it is not copied locally.
+The command resolves Git `HEAD` and records its generated invocation itself;
+the future verifier command uses the same receipt boundary. Callers cannot
+supply a different revision or command string. The source RFC stays outside
+this repository and is fail-closed against the pinned
+`sha256:1dfdc69b055af5059021d130e216ed702a9636fb585cc5c597be783382d5e357`.

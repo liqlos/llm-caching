@@ -11,12 +11,21 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .canonical import ContractError
 from .manifest import validate_manifest
-from .results import ResultReceipt, file_sha256, make_receipt, write_compact_report, write_raw_result
+from .results import (
+    ResultReceipt,
+    file_sha256,
+    make_receipt,
+    recorded_module_command,
+    resolve_git_revision,
+    write_compact_report,
+    write_raw_result,
+)
 from .verifier import AdapterAvailability, VerifierAdapter, VerifierCase, VerifierHarness
 
 
@@ -97,8 +106,8 @@ def execute_suite(
     suite: str,
     fixture_path: Path,
     manifest_path: Path,
-    command: str,
-    git_revision: str,
+    repository_root: Path,
+    command_arguments: Sequence[str],
 ) -> ResultReceipt:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     validate_manifest(manifest)
@@ -127,8 +136,8 @@ def execute_suite(
     }[receipt.execution_class]
     return make_receipt(
         evidence_class=evidence_class,
-        command=command,
-        git_revision=git_revision,
+        command=recorded_module_command("pcss.verifier_runner", command_arguments, repository_root),
+        git_revision=resolve_git_revision(repository_root),
         input_fingerprints={"fixture": file_sha256(fixture_path), "manifest": file_sha256(manifest_path)},
         status=receipt.status,
         payload=json.loads(receipt.as_json()),
@@ -143,16 +152,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--git-revision", required=True)
-    parser.add_argument("--exact-command", required=True)
-    args = parser.parse_args(argv)
+    parser.add_argument("--repository-root", type=Path, default=Path.cwd())
+    command_arguments = tuple(argv if argv is not None else sys.argv[1:])
+    args = parser.parse_args(command_arguments)
     receipt = execute_suite(
         adapter=_load_adapter(args.adapter),
         suite=args.suite,
         fixture_path=args.fixture,
         manifest_path=args.manifest,
-        command=args.exact_command,
-        git_revision=args.git_revision,
+        repository_root=args.repository_root.resolve(),
+        command_arguments=command_arguments,
     )
     write_raw_result(args.output, receipt)
     if args.report is not None:

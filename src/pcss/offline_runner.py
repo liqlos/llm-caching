@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import asdict, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -37,8 +38,20 @@ from .metrics import (
     viable_opportunity_recovery_rate,
 )
 from .replay import ReplayResult, replay_chronologically
-from .results import ResultReceipt, file_sha256, make_receipt, write_compact_report, write_raw_result
+from .results import (
+    ResultReceipt,
+    file_sha256,
+    make_receipt,
+    recorded_module_command,
+    resolve_git_revision,
+    write_compact_report,
+    write_raw_result,
+)
 from .trace import normalize_trace_record, trace_stream_fingerprint, validate_trace_sequence
+
+
+PCSS_MASTER_RFC_FILENAME = "PCSS_MASTER_RFC_EN.md"
+PCSS_MASTER_RFC_SHA256 = "1dfdc69b055af5059021d130e216ed702a9636fb585cc5c597be783382d5e357"
 
 
 def _json_value(value: Any) -> Any:
@@ -69,6 +82,19 @@ def load_trace_fixture(path: Path) -> list[dict[str, Any]]:
     records = [normalize_trace_record(record) for record in value]
     validate_trace_sequence(records, require_uniform_fingerprints=True)
     return records
+
+
+def _validate_rfc_source(path: Path, *, expected_sha256: str) -> str:
+    """Bind a receipt to the versioned master RFC rather than an arbitrary file."""
+
+    if path.name != PCSS_MASTER_RFC_FILENAME:
+        raise ContractError(f"RFC source must be named {PCSS_MASTER_RFC_FILENAME}: {path}")
+    if not path.is_file():
+        raise ContractError(f"RFC source file is required for the receipt: {path}")
+    actual_sha256 = file_sha256(path)
+    if actual_sha256 != expected_sha256:
+        raise ContractError("RFC source fingerprint does not match the pinned PCSS master RFC")
+    return actual_sha256
 
 
 def _archive_validation(result: ReplayResult) -> dict[str, Any]:
@@ -136,14 +162,25 @@ def _capacity_simulation(result: ReplayResult, common_archive_bytes: int) -> dic
                 "imported_corpus",
             }
         )
-        source_record_id = persistent[0].source_record_id if persistent else item.record_id
+        selected = min(
+            persistent,
+            key=lambda candidate: (
+                -candidate.accepted_prefix_length,
+                -candidate.matched_suffix_length,
+                candidate.source_record_id,
+                candidate.source_cursor,
+                candidate.tier.value,
+            ),
+            default=None,
+        )
+        source_record_id = selected.source_record_id if selected is not None else item.record_id
         observations.append(
             CapacityObservation(
                 observation_id=f"{item.record_id}:{item.position}",
                 epoch=epoch,
                 ordinal=ordinal,
                 bundle_id=source_record_id,
-                unique_value=item.persistent_unique_prefix,
+                unique_value=item.persistent_unique_prefix if selected is not None else 0,
             )
         )
     simulator = CapacitySimulator(bundles, common_archive_bytes=common_archive_bytes)
@@ -213,23 +250,24 @@ def execute_offline_fixture(
     *,
     fixture_path: Path,
     rfc_path: Path,
-    command: str,
-    git_revision: str,
+    repository_root: Path,
+    command_arguments: Sequence[str],
+    expected_rfc_sha256: str = PCSS_MASTER_RFC_SHA256,
 ) -> ResultReceipt:
     """Execute the host-independent replay and make one simulator receipt."""
 
-    if not rfc_path.is_file():
-        raise ContractError(f"RFC source file is required for the receipt: {rfc_path}")
+    resolved_root = repository_root.resolve()
+    rfc_fingerprint = _validate_rfc_source(rfc_path, expected_sha256=expected_rfc_sha256)
     records = load_trace_fixture(fixture_path)
     result = replay_chronologically(records)
     if result.future_tokens_used_for_retrieval:
         raise ContractError("offline replay future-leakage invariant failed")
     return make_receipt(
         evidence_class="SIMULATOR",
-        command=command,
-        git_revision=git_revision,
+        command=recorded_module_command("pcss.offline_runner", command_arguments, resolved_root),
+        git_revision=resolve_git_revision(resolved_root),
         input_fingerprints={
-            "rfc": file_sha256(rfc_path),
+            "rfc": rfc_fingerprint,
             "trace_fixture": file_sha256(fixture_path),
         },
         status="VERIFIED_OFFLINE",
@@ -248,14 +286,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--rfc", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--git-revision", required=True)
-    parser.add_argument("--exact-command", required=True)
-    args = parser.parse_args(argv)
+    parser.add_argument("--repository-root", type=Path, default=Path.cwd())
+    command_arguments = tuple(argv if argv is not None else sys.argv[1:])
+    args = parser.parse_args(command_arguments)
     receipt = execute_offline_fixture(
         fixture_path=args.fixture,
         rfc_path=args.rfc,
-        command=args.exact_command,
-        git_revision=args.git_revision,
+        repository_root=args.repository_root,
+        command_arguments=command_arguments,
     )
     write_raw_result(args.output, receipt)
     if args.report is not None:

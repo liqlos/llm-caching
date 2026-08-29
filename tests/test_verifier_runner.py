@@ -47,8 +47,8 @@ def test_runner_emits_offline_fixture_receipt_without_hardware_claim(tmp_path: P
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        command="exact command",
-        git_revision="a" * 40,
+        repository_root=Path(__file__).resolve().parents[1],
+        command_arguments=("--suite", "forced-rejection"),
     )
     assert receipt.evidence_class == "OFFLINE_FIXTURE"
     assert receipt.status == "OFFLINE_FIXTURE"

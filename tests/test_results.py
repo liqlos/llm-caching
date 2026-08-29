@@ -32,3 +32,10 @@ def test_raw_receipt_and_compact_report_link_exact_inputs(tmp_path: Path) -> Non
 def test_report_is_not_created_without_a_real_raw_result(tmp_path: Path) -> None:
     with pytest.raises(ContractError, match="existing raw result"):
         write_compact_report(tmp_path / "report.md", raw_result=tmp_path / "missing.json", title="No result")
+
+
+def test_raw_receipts_are_not_overwritten(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.json"
+    write_raw_result(raw, receipt())
+    with pytest.raises(ContractError, match="already exists"):
+        write_raw_result(raw, receipt())

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
+import subprocess
+import sys
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +15,36 @@ from typing import Any, Literal
 from .canonical import ContractError, canonical_json, require_string, sha256
 
 EvidenceClass = Literal["SIMULATOR", "LOCAL_MEASURED", "NOT_RUN", "OFFLINE_FIXTURE"]
+
+
+def resolve_git_revision(repository_root: Path) -> str:
+    """Read the actual full Git HEAD used by a reproducible result command."""
+
+    try:
+        completed = subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=repository_root,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise ContractError("git is required to create a reproducible PCSS receipt") from error
+    revision = completed.stdout.strip()
+    if completed.returncode != 0 or len(revision) != 40:
+        raise ContractError(f"unable to resolve Git HEAD for receipt: {repository_root}")
+    return revision
+
+
+def recorded_module_command(
+    module: str, command_arguments: Sequence[str], repository_root: Path
+) -> str:
+    """Make a rerunnable Python-module command from the actual parsed argv."""
+
+    module = require_string(module, "module")
+    source_path = repository_root.resolve() / "src"
+    invocation = shlex.join((sys.executable, "-m", module, *command_arguments))
+    return f"PYTHONPATH={shlex.quote(str(source_path))} {invocation}"
 
 
 def file_sha256(path: Path) -> str:
@@ -73,7 +107,10 @@ def make_receipt(
 
 
 def write_raw_result(path: Path, receipt: ResultReceipt) -> str:
-    """Write one canonical raw receipt and return its file SHA-256."""
+    """Write one canonical immutable raw receipt and return its file SHA-256."""
+
+    if path.exists():
+        raise ContractError("raw result path already exists; preserve the prior receipt and choose a new output path")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(receipt.as_json() + "\n", encoding="utf-8")
     return file_sha256(path)
@@ -101,4 +138,3 @@ def write_compact_report(path: Path, *, raw_result: Path, title: str) -> None:
     ]
     lines.extend(f"  - `{label}`: `sha256:{fingerprint}`" for label, fingerprint in sorted(receipt["input_fingerprints"].items()))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-

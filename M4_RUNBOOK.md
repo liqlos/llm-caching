@@ -20,7 +20,7 @@ The current entry point is:
   --adapter MODULE:CALLABLE \
   --suite k-sweep|perfect-draft|provider-floor|forced-rejection|long-mixed \
   --fixture PATH --manifest PATH --output PATH \
-  [--report PATH] --git-revision REVISION --exact-command TEXT
+  [--report PATH] [--repository-root PATH]
 ~~~
 
 MODULE:CALLABLE must construct an object with name, availability(), and
@@ -250,10 +250,9 @@ PY
 
 ## Target-suite sequence
 
-The function records a precise primary invocation in the receipt command
-field. Its separate exact-command argument is that invocation without the
-self-describing argument itself; this avoids a recursive command string while
-retaining the suite, adapter, inputs, output paths, and Git revision.
+The function resolves the repository's actual Git HEAD and records its parsed
+invocation in the receipt command field. It accepts neither a caller-supplied
+revision nor a caller-supplied command string.
 
 ~~~sh
 run_suite() {
@@ -262,7 +261,6 @@ run_suite() {
   stem="$3"
   raw="$PCSS_RUN_ROOT/raw/$stem.json"
   report="$PCSS_RUN_ROOT/reports/$stem.md"
-  exact_command="$PCSS_PYTHON -m pcss.verifier_runner --adapter $PCSS_ADAPTER --suite $suite --fixture $fixture --manifest $PCSS_OBSERVED_MANIFEST --output $raw --report $report --git-revision $PCSS_GIT_REVISION"
 
   "$PCSS_PYTHON" -m pcss.verifier_runner \
     --adapter "$PCSS_ADAPTER" \
@@ -271,8 +269,7 @@ run_suite() {
     --manifest "$PCSS_OBSERVED_MANIFEST" \
     --output "$raw" \
     --report "$report" \
-    --git-revision "$PCSS_GIT_REVISION" \
-    --exact-command "$exact_command"
+    --repository-root "$PCSS_REPO"
 }
 
 run_suite k-sweep "$PCSS_K_SWEEP_FIXTURE" 01-k-sweep
