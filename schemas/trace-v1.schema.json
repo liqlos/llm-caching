@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pcss.local/schemas/trace-v1.schema.json",
+  "title": "PCSS visible committed-token trace v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_id",
+    "timestamp_ns",
+    "chronological_index",
+    "request_id",
+    "session_id",
+    "trusted_scope",
+    "artifact_lineage",
+    "model_fingerprint",
+    "tokenizer_fingerprint",
+    "chat_template_fingerprint",
+    "generation_protocol_fingerprint",
+    "generation_protocol",
+    "outcome_class",
+    "source",
+    "privacy",
+    "reasoning_retention",
+    "record_state",
+    "content"
+  ],
+  "properties": {
+    "schema_version": {"const": "pcss.trace/v1"},
+    "record_id": {"type": "string", "minLength": 1},
+    "timestamp_ns": {"type": "integer", "minimum": 0},
+    "chronological_index": {"type": "integer", "minimum": 0},
+    "request_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "trusted_scope": {"$ref": "#/$defs/trusted_scope"},
+    "artifact_lineage": {"$ref": "#/$defs/artifact_lineage"},
+    "model_fingerprint": {"$ref": "#/$defs/fingerprint"},
+    "tokenizer_fingerprint": {"$ref": "#/$defs/fingerprint"},
+    "chat_template_fingerprint": {"$ref": "#/$defs/fingerprint"},
+    "generation_protocol_fingerprint": {"$ref": "#/$defs/fingerprint"},
+    "generation_protocol": {"$ref": "#/$defs/generation_protocol"},
+    "outcome_class": {"enum": ["unknown", "tests_passed", "patch_accepted", "tool_success", "failure"]},
+    "source": {"$ref": "#/$defs/source"},
+    "privacy": {"$ref": "#/$defs/privacy"},
+    "reasoning_retention": {"const": "exclude"},
+    "record_state": {"enum": ["active", "redacted"]},
+    "content": {"$ref": "#/$defs/content"}
+  },
+  "$defs": {
+    "fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullable_string": {"type": ["string", "null"]},
+    "trusted_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope_class", "principal_namespace", "application_id", "repository_id", "workflow_stage", "semantic_block_id"],
+      "properties": {
+        "scope_class": {"enum": ["current_context", "current_source", "same_session", "same_repository", "personal_persistent", "imported_corpus"]},
+        "principal_namespace": {"type": "string", "minLength": 1},
+        "application_id": {"$ref": "#/$defs/nullable_string"},
+        "repository_id": {"$ref": "#/$defs/nullable_string"},
+        "workflow_stage": {"$ref": "#/$defs/nullable_string"},
+        "semantic_block_id": {"$ref": "#/$defs/nullable_string"}
+      }
+    },
+    "source_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_byte", "end_byte"],
+      "properties": {
+        "start_byte": {"type": "integer", "minimum": 0},
+        "end_byte": {"type": "integer", "minimum": 0}
+      }
+    },
+    "artifact_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_id", "revision_family", "revision", "parent_revision", "path_hash", "before_blob", "after_blob", "source_span"],
+      "properties": {
+        "repository_id": {"$ref": "#/$defs/nullable_string"},
+        "revision_family": {"$ref": "#/$defs/nullable_string"},
+        "revision": {"$ref": "#/$defs/nullable_string"},
+        "parent_revision": {"$ref": "#/$defs/nullable_string"},
+        "path_hash": {"$ref": "#/$defs/nullable_string"},
+        "before_blob": {"$ref": "#/$defs/nullable_string"},
+        "after_blob": {"$ref": "#/$defs/nullable_string"},
+        "source_span": {"anyOf": [{"$ref": "#/$defs/source_span"}, {"type": "null"}]}
+      }
+    },
+    "generation_protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decoding_mode", "thinking_mode", "reasoning_effort", "preserve_thinking", "schema_or_tool_version"],
+      "properties": {
+        "decoding_mode": {"enum": ["greedy", "sampling", "constrained"]},
+        "thinking_mode": {"enum": ["on", "off"]},
+        "reasoning_effort": {"$ref": "#/$defs/nullable_string"},
+        "preserve_thinking": {"const": false},
+        "schema_or_tool_version": {"$ref": "#/$defs/nullable_string"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_class", "provenance_family", "eligible_for_persistent_store"],
+      "properties": {
+        "source_class": {"enum": ["model_output", "visible_final", "visible_code", "tool_call", "tool_result", "source_file", "patch", "imported_corpus"]},
+        "provenance_family": {"enum": ["session", "repository", "personal", "imported", "public"]},
+        "eligible_for_persistent_store": {"type": "boolean"}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["privacy_class", "retention_class"],
+      "properties": {
+        "privacy_class": {"enum": ["private", "personal", "repository", "public", "restricted"]},
+        "retention_class": {"enum": ["ephemeral", "session", "repository", "persistent", "licensed_import", "delete_on_request"]}
+      }
+    },
+    "token_id_list": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 4294967295}},
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt_token_ids", "committed_token_ids", "committed_token_status"],
+      "properties": {
+        "prompt_token_ids": {"$ref": "#/$defs/token_id_list"},
+        "committed_token_ids": {"$ref": "#/$defs/token_id_list"},
+        "committed_token_status": {"enum": ["none", "partial", "complete"]}
+      }
+    }
+  }
+}
