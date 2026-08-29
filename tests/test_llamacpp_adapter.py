@@ -23,7 +23,7 @@ def _runtime() -> dict[str, object]:
         "n_ctx": 512,
         "n_batch": 128,
         "n_gpu_layers": 99,
-        "flash_attn": True,
+        "flash_attn": "auto",
         "seed": 7,
         "n_threads": 2,
         "n_threads_batch": 2,
@@ -236,6 +236,19 @@ def test_unknown_config_field_is_not_run(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert availability.execution_class == "NOT_RUN"
     assert "unknown" in availability.reason
+
+
+def test_boolean_flash_attn_is_not_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter, _, _, _ = _ready_adapter(tmp_path, monkeypatch)
+    config = tmp_path / "llamacpp-config.json"
+    payload = json.loads(config.read_text(encoding="utf-8"))
+    payload["runtime"]["flash_attn"] = True
+    config.write_text(json.dumps(payload), encoding="utf-8")
+
+    availability = adapter.availability()
+
+    assert availability.execution_class == "NOT_RUN"
+    assert "auto, enabled, disabled" in availability.reason
 
 
 def test_ambiguous_capability_response_never_claims_target_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

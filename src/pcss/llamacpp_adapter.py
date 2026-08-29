@@ -236,7 +236,10 @@ def _load_config(environment: Mapping[str, str]) -> _BridgeConfig:
     require_int(runtime["n_ctx"], "llama.cpp adapter config.runtime.n_ctx", minimum=1)
     require_int(runtime["n_batch"], "llama.cpp adapter config.runtime.n_batch", minimum=1)
     require_int(runtime["n_gpu_layers"], "llama.cpp adapter config.runtime.n_gpu_layers", minimum=0)
-    _require_bool(runtime["flash_attn"], "llama.cpp adapter config.runtime.flash_attn")
+    if runtime["flash_attn"] not in {"auto", "enabled", "disabled"}:
+        raise ContractError(
+            "llama.cpp adapter config.runtime.flash_attn must be one of auto, enabled, disabled"
+        )
     require_int(runtime["seed"], "llama.cpp adapter config.runtime.seed", minimum=0)
     require_int(runtime["n_threads"], "llama.cpp adapter config.runtime.n_threads", minimum=1)
     require_int(runtime["n_threads_batch"], "llama.cpp adapter config.runtime.n_threads_batch", minimum=1)
