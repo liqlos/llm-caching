@@ -123,7 +123,7 @@ mismatch is a `NOT_RUN` authorization failure, not a retryable test failure.
 
 ### Target fixture gate
 
-Each fixture passed to the runner is exactly:
+The legacy empty-context fixture shape is exactly:
 
 ~~~text
 {
@@ -132,7 +132,27 @@ Each fixture passed to the runner is exactly:
 }
 ~~~
 
-Every case has exactly these fields:
+For a real non-empty-context target run, use `pcss.m4-verifier-cases/v2`:
+
+~~~text
+{
+  "schema_version": "pcss.m4-verifier-cases/v2",
+  "provenance": {
+    "schema_version": "pcss.target-verifier-fixture-provenance/v1",
+    "reference_method": "serial-greedy-full-state/v1",
+    "model_artifact_sha256": "<runner-observed GGUF SHA-256>",
+    "runtime_configuration_fingerprint": "<runner-observed configuration fingerprint>"
+  },
+  "cases": [ ... ]
+}
+~~~
+
+V2 adds a non-empty `initial_context_tokens` sequence to every case. Its
+provenance must match the runner-observed GGUF and runtime configuration before
+the adapter is allowed to verify; use V1 only for the deliberately limited
+empty-context mechanical boundary.
+
+Every V1 case has exactly these fields:
 
 ~~~text
 case_id
@@ -143,6 +163,8 @@ expected_state_digest
 k
 include_bonus_on_full_accept
 ~~~
+
+Every V2 case has the same fields plus `initial_context_tokens`.
 
 k equals the number of draft tokens. Every token ID, target continuation,
 committed-token expectation, and state digest comes from the exact observed
@@ -174,12 +196,11 @@ Use separate fixtures because the contracts differ:
 - long-mixed contains the adapter's declared long mixed accept/reject behavior
   and its final reference-state digest.
 
-VerifierCase currently has no prompt or initial-state field, and
-long_mixed_trajectories invokes independent cases. It cannot by itself prove
-non-empty-context restoration or multi-cycle shared-state continuity. If the
-external adapter cannot encode and compare those semantics inside each case,
-leave that aspect NOT_RUN and extend the harness before making a general
-hybrid-state correctness claim.
+V2 binds a concrete non-empty initial token context to each reference path.
+`long_mixed_trajectories` still invokes independent cases, so it can exercise
+long reconstructed mixed histories but cannot by itself prove a shared live
+context surviving across several adapter calls. Leave shared-state continuity
+NOT_RUN unless a later versioned fixture models those transitions explicitly.
 
 ## Future target preflight
 

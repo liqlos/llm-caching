@@ -146,6 +146,27 @@ class TargetExecutionPermit:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetFixtureProvenance:
+    """Reference-path facts that bind a context-bearing target fixture to one runtime."""
+
+    schema_version: str
+    reference_method: str
+    model_artifact_sha256: str
+    runtime_configuration_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pcss.target-verifier-fixture-provenance/v1":
+            raise ContractError("unsupported target fixture provenance schema")
+        if self.reference_method != "serial-greedy-full-state/v1":
+            raise ContractError("unsupported target fixture reference method")
+        _sha256(self.model_artifact_sha256, "target_fixture_provenance.model_artifact_sha256")
+        _sha256(
+            self.runtime_configuration_fingerprint,
+            "target_fixture_provenance.runtime_configuration_fingerprint",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class VerifierCase:
     """A token-only fixture with expected commit and full mutable-state digest."""
 
@@ -156,14 +177,19 @@ class VerifierCase:
     expected_state_digest: str
     k: int
     include_bonus_on_full_accept: bool = False
+    initial_context_tokens: tuple[int, ...] = ()
+    reference_provenance: TargetFixtureProvenance | None = None
 
     def __post_init__(self) -> None:
         require_string(self.case_id, "case.case_id")
         _tokens(self.draft_tokens, "case.draft_tokens")
         _tokens(self.target_tokens, "case.target_tokens")
         _tokens(self.expected_committed_tokens, "case.expected_committed_tokens")
+        _tokens(self.initial_context_tokens, "case.initial_context_tokens", allow_empty=True)
         require_string(self.expected_state_digest, "case.expected_state_digest")
         require_int(self.k, "case.k", minimum=1)
+        if not isinstance(self.include_bonus_on_full_accept, bool):
+            raise ContractError("case.include_bonus_on_full_accept must be a boolean")
         if self.k != len(self.draft_tokens):
             raise ContractError("case.k must equal the draft token count")
 

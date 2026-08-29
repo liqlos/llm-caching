@@ -7,7 +7,7 @@ import pytest
 
 from pcss.canonical import ContractError
 from pcss.verifier import AdapterAvailability, ScriptedFixtureAdapter, VerifierCase, fixture_state_digest
-from pcss.verifier_runner import execute_suite, load_cases
+from pcss.verifier_runner import _require_fixture_target_compatibility, execute_suite, load_cases
 
 
 def unfilled_manifest() -> dict:
@@ -42,6 +42,28 @@ def fixture_payload() -> dict:
     }
 
 
+def fixture_payload_v2() -> dict:
+    return {
+        "schema_version": "pcss.m4-verifier-cases/v2",
+        "provenance": {
+            "schema_version": "pcss.target-verifier-fixture-provenance/v1",
+            "reference_method": "serial-greedy-full-state/v1",
+            "model_artifact_sha256": "a" * 64,
+            "runtime_configuration_fingerprint": "b" * 64,
+        },
+        "cases": [{
+            "case_id": "context-case",
+            "initial_context_tokens": [10, 11],
+            "draft_tokens": [12],
+            "target_tokens": [12],
+            "expected_committed_tokens": [12],
+            "expected_state_digest": "state",
+            "k": 1,
+            "include_bonus_on_full_accept": False,
+        }],
+    }
+
+
 def test_runner_emits_offline_fixture_receipt_without_hardware_claim(tmp_path: Path) -> None:
     fixture = tmp_path / "cases.json"
     manifest = tmp_path / "manifest.json"
@@ -64,6 +86,41 @@ def test_fixture_loader_fails_closed(tmp_path: Path) -> None:
     path.write_text(json.dumps({"schema_version": "pcss.m4-verifier-cases/v1", "cases": []}))
     with pytest.raises(ContractError, match="at least one case"):
         load_cases(path)
+
+
+def test_v2_fixture_binds_context_and_reference_runtime(tmp_path: Path) -> None:
+    path = tmp_path / "v2.json"
+    path.write_text(json.dumps(fixture_payload_v2()))
+    cases = load_cases(path)
+    assert cases[0].initial_context_tokens == (10, 11)
+    assert cases[0].reference_provenance is not None
+    _require_fixture_target_compatibility(
+        cases,
+        {
+            "model_artifact_sha256": "a" * 64,
+            "runtime_configuration_fingerprint": "b" * 64,
+        },
+    )
+
+
+def test_v2_fixture_rejects_empty_context_or_different_runtime(tmp_path: Path) -> None:
+    payload = fixture_payload_v2()
+    payload["cases"][0]["initial_context_tokens"] = []
+    empty_path = tmp_path / "empty.json"
+    empty_path.write_text(json.dumps(payload))
+    with pytest.raises(ContractError, match="non-empty initial_context_tokens"):
+        load_cases(empty_path)
+
+    path = tmp_path / "v2.json"
+    path.write_text(json.dumps(fixture_payload_v2()))
+    with pytest.raises(ContractError, match="runtime configuration"):
+        _require_fixture_target_compatibility(
+            load_cases(path),
+            {
+                "model_artifact_sha256": "a" * 64,
+                "runtime_configuration_fingerprint": "c" * 64,
+            },
+        )
 
 
 class SelfDeclaredTargetAdapter:

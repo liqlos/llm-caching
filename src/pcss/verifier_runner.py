@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .canonical import ContractError, require_string, sha256
+from .canonical import ContractError, require_exact_keys, require_mapping, require_string, sha256
 from .manifest import validate_manifest
 from .results import (
     ResultReceipt,
@@ -35,6 +35,7 @@ from .verifier import (
     HarnessReceipt,
     TargetAdapterBinding,
     TargetExecutionPermit,
+    TargetFixtureProvenance,
     TargetHostIdentity,
     VerifierAdapter,
     VerifierCase,
@@ -62,18 +63,33 @@ class _FrozenAvailabilityAdapter:
         return self._adapter.verify(case)
 
 
-def _case(payload: Mapping[str, Any]) -> VerifierCase:
-    required = {
-        "case_id",
-        "draft_tokens",
-        "target_tokens",
-        "expected_committed_tokens",
-        "expected_state_digest",
-        "k",
-        "include_bonus_on_full_accept",
-    }
+_CASE_V1_KEYS = {
+    "case_id",
+    "draft_tokens",
+    "target_tokens",
+    "expected_committed_tokens",
+    "expected_state_digest",
+    "k",
+    "include_bonus_on_full_accept",
+}
+_CASE_V2_KEYS = _CASE_V1_KEYS | {"initial_context_tokens"}
+_FIXTURE_V2_KEYS = {"schema_version", "provenance", "cases"}
+
+
+def _case(
+    payload: Mapping[str, Any],
+    *,
+    schema_version: str,
+    provenance: TargetFixtureProvenance | None,
+) -> VerifierCase:
+    required = _CASE_V1_KEYS if schema_version == "pcss.m4-verifier-cases/v1" else _CASE_V2_KEYS
     if set(payload) != required:
         raise ContractError("verifier case has missing or unknown fields")
+    initial_context_tokens = ()
+    if schema_version == "pcss.m4-verifier-cases/v2":
+        initial_context_tokens = tuple(payload["initial_context_tokens"])
+        if not initial_context_tokens:
+            raise ContractError("v2 verifier cases require a non-empty initial_context_tokens sequence")
     return VerifierCase(
         case_id=payload["case_id"],
         draft_tokens=tuple(payload["draft_tokens"]),
@@ -82,6 +98,27 @@ def _case(payload: Mapping[str, Any]) -> VerifierCase:
         expected_state_digest=payload["expected_state_digest"],
         k=payload["k"],
         include_bonus_on_full_accept=payload["include_bonus_on_full_accept"],
+        initial_context_tokens=initial_context_tokens,
+        reference_provenance=provenance,
+    )
+
+
+def _fixture_provenance(payload: Mapping[str, Any]) -> TargetFixtureProvenance:
+    require_exact_keys(
+        payload,
+        {
+            "schema_version",
+            "reference_method",
+            "model_artifact_sha256",
+            "runtime_configuration_fingerprint",
+        },
+        "verifier fixture provenance",
+    )
+    return TargetFixtureProvenance(
+        schema_version=payload["schema_version"],
+        reference_method=payload["reference_method"],
+        model_artifact_sha256=payload["model_artifact_sha256"],
+        runtime_configuration_fingerprint=payload["runtime_configuration_fingerprint"],
     )
 
 
@@ -90,11 +127,26 @@ def load_cases(path: Path) -> tuple[VerifierCase, ...]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ContractError(f"unable to read verifier fixture: {path}") from error
-    if set(payload) != {"schema_version", "cases"} or payload["schema_version"] != "pcss.m4-verifier-cases/v1":
-        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1")
+    payload = require_mapping(payload, "verifier fixture")
+    schema_version = payload.get("schema_version")
+    provenance: TargetFixtureProvenance | None = None
+    if schema_version == "pcss.m4-verifier-cases/v1":
+        require_exact_keys(payload, {"schema_version", "cases"}, "verifier fixture")
+    elif schema_version == "pcss.m4-verifier-cases/v2":
+        require_exact_keys(payload, _FIXTURE_V2_KEYS, "verifier fixture")
+        provenance = _fixture_provenance(require_mapping(payload["provenance"], "verifier fixture provenance"))
+    else:
+        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1 or v2")
     if not isinstance(payload["cases"], list) or not payload["cases"]:
         raise ContractError("verifier fixture must contain at least one case")
-    cases = tuple(_case(item) for item in payload["cases"])
+    cases = tuple(
+        _case(
+            require_mapping(item, "verifier case"),
+            schema_version=schema_version,
+            provenance=provenance,
+        )
+        for item in payload["cases"]
+    )
     if len({case.case_id for case in cases}) != len(cases):
         raise ContractError("verifier case ids must be unique")
     return cases
@@ -258,6 +310,24 @@ def _authorize_target_backend(
     )
 
 
+def _require_fixture_target_compatibility(
+    cases: tuple[VerifierCase, ...], observed_binding: Mapping[str, str]
+) -> None:
+    """Reject a context-bearing fixture generated by a different target runtime."""
+
+    provenances = {case.reference_provenance for case in cases if case.reference_provenance is not None}
+    if not provenances:
+        return
+    if len(provenances) != 1:
+        raise ContractError("target fixture cases must share one reference provenance")
+    provenance = next(iter(provenances))
+    assert provenance is not None
+    if provenance.model_artifact_sha256 != observed_binding["model_artifact_sha256"]:
+        raise ContractError("target fixture model fingerprint differs from runner-observed model artifact")
+    if provenance.runtime_configuration_fingerprint != observed_binding["runtime_configuration_fingerprint"]:
+        raise ContractError("target fixture runtime configuration differs from runner-observed binding")
+
+
 def _not_run_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
     return HarnessReceipt(
         suite=suite,
@@ -302,6 +372,7 @@ def execute_suite(
         try:
             _require_observed_target_manifest(manifest)
             host_identity, observed_binding = capture_target_observation(adapter)
+            _require_fixture_target_compatibility(cases, observed_binding)
             permit = _authorize_target_backend(adapter, manifest, host_identity, observed_binding)
         except Exception as error:
             # Authorization errors must leave an auditable NOT_RUN receipt and never call verify().

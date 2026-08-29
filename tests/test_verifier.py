@@ -7,6 +7,7 @@ from pcss.verifier import (
     AdapterAvailability,
     ScriptedFixtureAdapter,
     TargetAdapterBinding,
+    TargetFixtureProvenance,
     UnavailableAdapter,
     VerifierCase,
     VerifierHarness,
@@ -115,3 +116,24 @@ def test_target_binding_requires_a_hashed_immutable_runtime_configuration() -> N
         runtime_configuration_fingerprint="b" * 64,
     )
     assert binding.runtime_configuration_fingerprint == "b" * 64
+
+
+def test_context_bearing_target_fixture_provenance_is_strict() -> None:
+    provenance = TargetFixtureProvenance(
+        schema_version="pcss.target-verifier-fixture-provenance/v1",
+        reference_method="serial-greedy-full-state/v1",
+        model_artifact_sha256="a" * 64,
+        runtime_configuration_fingerprint="b" * 64,
+    )
+    case_with_context = VerifierCase(
+        case_id="context",
+        initial_context_tokens=(1, 2),
+        draft_tokens=(3,),
+        target_tokens=(3,),
+        expected_committed_tokens=(3,),
+        expected_state_digest="state",
+        k=1,
+        reference_provenance=provenance,
+    )
+    assert case_with_context.initial_context_tokens == (1, 2)
+    assert case_with_context.reference_provenance is provenance
