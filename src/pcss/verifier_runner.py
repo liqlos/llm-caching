@@ -222,6 +222,37 @@ def _sysctl_value(name: str) -> str:
     return value
 
 
+def _system_profiler_hardware_profile() -> Mapping[str, str]:
+    """Read the immutable product class and model identifier from macOS."""
+
+    try:
+        completed = subprocess.run(
+            ("system_profiler", "-json", "SPHardwareDataType"),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise ContractError("unable to observe target host via system_profiler") from error
+    if completed.returncode != 0 or not completed.stdout:
+        raise ContractError("unable to observe target host via system_profiler")
+    try:
+        payload = require_mapping(json.loads(completed.stdout), "system_profiler hardware profile")
+    except json.JSONDecodeError as error:
+        raise ContractError("system_profiler hardware profile must be valid JSON") from error
+    entries = payload.get("SPHardwareDataType")
+    if not isinstance(entries, list) or len(entries) != 1:
+        raise ContractError("system_profiler hardware profile must contain exactly one hardware entry")
+    entry = require_mapping(entries[0], "system_profiler hardware entry")
+    values: dict[str, str] = {}
+    for field in ("machine_model", "machine_name"):
+        value = entry.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ContractError(f"system_profiler hardware entry must contain {field}")
+        values[field] = value.strip()
+    return values
+
+
 def observe_target_host() -> TargetHostIdentity:
     """Observe the future user-specified target only after TARGET_BACKEND is requested."""
 
@@ -242,7 +273,10 @@ def observe_target_host() -> TargetHostIdentity:
         raise ContractError("TARGET_BACKEND requires the target macOS host")
     if identity.architecture != "arm64":
         raise ContractError("TARGET_BACKEND requires an arm64 target host")
-    if not identity.hardware_model.startswith("MacBookPro"):
+    hardware_profile = _system_profiler_hardware_profile()
+    if hardware_profile["machine_model"] != identity.hardware_model:
+        raise ContractError("sysctl and system_profiler hardware model identifiers must agree")
+    if hardware_profile["machine_name"] != "MacBook Pro":
         raise ContractError("TARGET_BACKEND requires the target MacBook Pro hardware class")
     if not identity.chip.startswith("Apple M4"):
         raise ContractError("TARGET_BACKEND requires an Apple M4-family chip")

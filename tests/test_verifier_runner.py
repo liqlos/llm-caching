@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from pcss import verifier_runner
 from pcss.canonical import ContractError
 from pcss.verifier import AdapterAvailability, ScriptedFixtureAdapter, VerifierCase, fixture_state_digest
 from pcss.verifier_runner import _require_fixture_target_compatibility, execute_suite, load_cases
@@ -140,6 +141,51 @@ def test_v2_target_fixture_without_explicit_seed_is_not_target_compatible(tmp_pa
                 "runtime_configuration_fingerprint": "b" * 64,
             },
         )
+
+
+def _target_sysctl_value(name: str) -> str:
+    return {
+        "hw.memsize": str(24 * 1024**3),
+        "hw.model": "Mac16,8",
+        "machdep.cpu.brand_string": "Apple M4 Pro",
+    }[name]
+
+
+def test_target_host_accepts_apple_model_identifier_when_product_class_is_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(verifier_runner, "_sysctl_value", _target_sysctl_value)
+    monkeypatch.setattr(verifier_runner.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(verifier_runner.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        verifier_runner,
+        "_system_profiler_hardware_profile",
+        lambda: {"machine_model": "Mac16,8", "machine_name": "MacBook Pro"},
+    )
+
+    identity = verifier_runner.observe_target_host()
+
+    assert identity.hardware_model == "Mac16,8"
+    assert identity.chip == "Apple M4 Pro"
+
+
+@pytest.mark.parametrize(
+    ("profile", "message"),
+    [
+        ({"machine_model": "Mac16,8", "machine_name": "Mac mini"}, "MacBook Pro hardware class"),
+        ({"machine_model": "Mac16,7", "machine_name": "MacBook Pro"}, "model identifiers must agree"),
+    ],
+)
+def test_target_host_rejects_unverified_product_class_or_inconsistent_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: dict[str, str],
+    message: str,
+) -> None:
+    monkeypatch.setattr(verifier_runner, "_sysctl_value", _target_sysctl_value)
+    monkeypatch.setattr(verifier_runner.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(verifier_runner.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(verifier_runner, "_system_profiler_hardware_profile", lambda: profile)
+
+    with pytest.raises(ContractError, match=message):
+        verifier_runner.observe_target_host()
 
 
 class SelfDeclaredTargetAdapter:
