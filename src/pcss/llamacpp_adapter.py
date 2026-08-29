@@ -1,10 +1,9 @@
-"""Fail-closed boundary for a future local ``pcss_llama_bridge`` executable.
+"""Fail-closed Python boundary for the local ``pcss_llama_bridge`` executable.
 
-The bridge is deliberately an external executable rather than a Python binding
-to any particular llama.cpp package.  This keeps the verifier contract usable
-with a locally built, pinned runtime while keeping this module dependency-free.
-Until an explicit configuration and a strict full-state capability response are
-available, this adapter reports ``NOT_RUN``.
+The native bridge owns llama.cpp model loading and full-context state handling.
+This module owns explicit configuration, independently checks the bridge's
+observed library identity, and rejects every incomplete or ambiguous response.
+It is a verifier adapter only; it makes no performance or deployment claim.
 """
 
 from __future__ import annotations
@@ -27,9 +26,9 @@ from .verifier import AdapterAvailability, AdapterOutcome, TargetAdapterBinding,
 CONFIG_ENVIRONMENT_VARIABLE = "PCSS_LLAMACPP_CONFIG"
 CONFIG_SCHEMA_VERSION = "pcss.llamacpp-adapter-config/v1"
 BRIDGE_PROTOCOL_VERSION = "pcss.llama-bridge/v1"
-CAPABILITIES_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v1"
 REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
-RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-response/v1"
+CAPABILITIES_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v1"
+VERIFY_SCHEMA_VERSION = "pcss.llama-bridge-verify/v1"
 
 _CONFIG_FIELDS = {
     "schema_version",
@@ -52,58 +51,119 @@ _RUNTIME_FIELDS = {
     "chat_template",
     "thinking_mode",
 }
-_CAPABILITY_FIELDS = {
+_COMMON_REQUEST_FIELDS = {
     "schema_version",
-    "bridge_protocol",
     "operation",
+    "model_artifact",
+    "llama_cpp_library",
+    "llama_cpp_revision",
+    "runtime",
+}
+_VERIFY_REQUEST_FIELDS = _COMMON_REQUEST_FIELDS | {"seed", "case"}
+_VERIFY_SEED_FIELDS = {"seed_id", "initial_context_tokens"}
+_VERIFY_CASE_FIELDS = {"case_id", "draft_tokens", "include_bonus_on_full_accept"}
+_CONFIGURATION_FIELDS = {"model_artifact", "llama_cpp_library", "llama_cpp_revision", "runtime"}
+_OBSERVED_CONTEXT_FIELDS = {
+    "actual_n_ctx",
+    "actual_n_batch",
+    "actual_n_threads",
+    "actual_n_threads_batch",
+}
+_CAPABILITIES_RESPONSE_FIELDS = {
+    "schema_version",
+    "operation",
+    "status",
     "backend",
-    "full_state",
-    "runtime_configuration_fingerprint",
-    "probe",
+    "state_export",
     "generation_mode",
+    "greedy_tie_break",
+    "raw_token_ids",
+    "llama_c_api_version",
+    "supports_gpu_offload",
+    "loaded_llama_cpp_library_path",
+    "supports_mmap",
+    "supports_mlock",
+    "vocabulary_size",
+    "configuration",
+    "observed_context",
+    "state_components",
+    "state_api",
+    "sampler_rng_state",
+    "probe_token",
+    "probe_state_sha256",
+    "probe_state_bytes",
+    "restored_state_sha256",
+    "restored_state_bytes",
+    "state_round_trip_byte_exact",
+    "operations",
+    "declared_identity_fields",
+    "chat_template_applied",
+    "thinking_mode_applied",
 }
-_CAPABILITY_BACKEND_FIELDS = {"runtime", "llama_cpp_revision", "library_sha256", "model_artifact_sha256"}
-_CAPABILITY_FULL_STATE_FIELDS = {"snapshot_api", "restore_api", "comparison", "covered_components"}
-_CAPABILITY_PROBE_FIELDS = {
-    "model_loaded",
-    "state_round_trip",
-    "comparison",
-    "covered_components",
-    "before_digest",
-    "after_digest",
-}
-_RESPONSE_FIELDS = {
+_VERIFY_RESPONSE_FIELDS = {
     "schema_version",
-    "bridge_protocol",
     "operation",
-    "outcome",
-    "state_comparison",
-    "runtime_configuration_fingerprint",
+    "status",
+    "backend",
     "generation_mode",
-}
-_OUTCOME_FIELDS = {
+    "greedy_tie_break",
+    "state_export",
+    "reconstruction",
+    "seed_id",
+    "case_id",
+    "target_tokens",
+    "vocabulary_size",
     "accepted_draft_tokens",
     "correction_token",
     "bonus_token",
     "committed_tokens",
+    "prompt_state_sha256",
+    "prompt_state_bytes",
+    "serial_state_sha256",
+    "serial_state_bytes",
+    "batched_state_sha256",
+    "batched_state_bytes",
+    "serial_mutable_state_digest",
+    "speculative_mutable_state_digest",
     "mutable_state_digest",
+    "state_matches",
+    "serial_next_token",
+    "batched_next_token",
+    "continuation_matches",
+    "configuration",
+    "observed_context",
+    "tokenization_boundary",
+    "state_api",
+    "sampler_rng_state",
+    "declared_identity_fields",
+    "chat_template_applied",
+    "thinking_mode_applied",
 }
-_STATE_COMPARISON_FIELDS = {"comparison", "reference_digest", "candidate_digest", "equal"}
-_FULL_STATE_COMPONENTS = ("llama_state", "logits", "token_history", "positions")
+_FULL_STATE_COMPONENTS = (
+    "llama_context_full_state",
+    "memory",
+    "logits",
+    "embedding_if_enabled",
+)
+_STATE_API = "llama_state_get_data+llama_state_set_data/full-context/v1"
+_SAMPLER_RNG_STATE = "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1"
+_DECLARED_IDENTITY_FIELDS = "caller-declared-not-verified-by-bridge/v1"
 _GENERATION_MODE = "greedy_argmax"
+_GREEDY_TIE_BREAK = "lowest-token-id/v1"
 
 
 def _require_exact_keys(value: Mapping[str, Any], expected: set[str], field: str) -> None:
     actual = set(value)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        unknown = sorted(actual - expected)
-        details = []
-        if missing:
-            details.append(f"missing={missing}")
-        if unknown:
-            details.append(f"unknown={unknown}")
-        raise ContractError(f"{field} has invalid keys: {', '.join(details)}")
+    if actual == expected:
+        return
+    details: list[str] = []
+    missing = sorted(expected - actual)
+    unknown = sorted(actual - expected)
+    if missing:
+        details.append(f"missing={missing}")
+    if unknown:
+        details.append(f"unknown={unknown}")
+    raise ContractError(f"{field} has invalid keys: {', '.join(details)}")
 
 
 def _require_mapping(value: object, field: str) -> dict[str, Any]:
@@ -125,13 +185,11 @@ def _require_sha256(value: object, field: str) -> str:
     return value
 
 
-def _require_tokens(value: object, field: str) -> tuple[int, ...]:
-    if not isinstance(value, list):
-        raise ContractError(f"{field} must be an array of token ids")
-    tokens: list[int] = []
-    for index, token in enumerate(value):
-        tokens.append(require_int(token, f"{field}[{index}]", minimum=0))
-    return tuple(tokens)
+def _require_tokens(value: object, field: str, *, nonempty: bool) -> tuple[int, ...]:
+    if not isinstance(value, list) or (nonempty and not value):
+        qualifier = " non-empty" if nonempty else ""
+        raise ContractError(f"{field} must be a{qualifier} token-id array")
+    return tuple(require_int(token, f"{field}[{index}]", minimum=0) for index, token in enumerate(value))
 
 
 def _strict_json_object(text: str, field: str) -> dict[str, Any]:
@@ -147,10 +205,10 @@ def _strict_json_object(text: str, field: str) -> dict[str, Any]:
         return result
 
     try:
-        value = json.loads(text, parse_constant=reject_constant, object_pairs_hook=reject_duplicate_keys)
+        payload = json.loads(text, parse_constant=reject_constant, object_pairs_hook=reject_duplicate_keys)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
         raise ContractError(f"{field} must be one strict JSON object") from error
-    return _require_mapping(value, field)
+    return _require_mapping(payload, field)
 
 
 def _absolute_regular_path(value: object, field: str, *, executable: bool = False) -> Path:
@@ -160,10 +218,10 @@ def _absolute_regular_path(value: object, field: str, *, executable: bool = Fals
         raise ContractError(f"{field} must be an absolute path")
     try:
         resolved = path.resolve(strict=True)
-        file_mode = resolved.stat().st_mode
+        mode = resolved.stat().st_mode
     except OSError as error:
         raise ContractError(f"{field} must resolve to a readable regular file") from error
-    if not stat.S_ISREG(file_mode):
+    if not stat.S_ISREG(mode):
         raise ContractError(f"{field} must resolve to a regular file")
     if executable and not os.access(resolved, os.X_OK):
         raise ContractError(f"{field} must resolve to an executable regular file")
@@ -190,7 +248,7 @@ class _BridgeConfig:
     llama_cpp_revision: str
     runtime: Mapping[str, Any]
     request_timeout_seconds: int
-    config_fingerprint: str
+    runtime_configuration_fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,19 +257,21 @@ class _PreparedBridge:
     capabilities: dict[str, Any]
     bridge_sha256: str
     model_sha256: str
-    library_sha256: str
+    loaded_library_path: Path
+    loaded_library_sha256: str
 
     @property
     def build_fingerprint(self) -> str:
         return sha256(
             {
-                "schema_version": "pcss.llamacpp-build-binding/v1",
-                "bridge_protocol": BRIDGE_PROTOCOL_VERSION,
-                "llama_cpp_revision": self.config.llama_cpp_revision,
+                "schema_version": "pcss.llamacpp-build-binding/v2",
                 "bridge_binary_sha256": self.bridge_sha256,
-                "llama_cpp_library_sha256": self.library_sha256,
                 "model_artifact_sha256": self.model_sha256,
-                "capability_fingerprint": sha256(self.capabilities),
+                "configured_llama_cpp_library": str(self.config.llama_cpp_library),
+                "loaded_llama_cpp_library": str(self.loaded_library_path),
+                "loaded_llama_cpp_library_sha256": self.loaded_library_sha256,
+                "llama_cpp_revision": self.config.llama_cpp_revision,
+                "capability_response_fingerprint": sha256(self.capabilities),
             }
         )
 
@@ -222,233 +282,312 @@ def _load_config(environment: Mapping[str, str]) -> _BridgeConfig:
         raise ContractError(f"{CONFIG_ENVIRONMENT_VARIABLE} must name an explicit config file")
     config_path = _absolute_regular_path(configured_path, CONFIG_ENVIRONMENT_VARIABLE)
     try:
-        raw = _strict_json_object(config_path.read_text(encoding="utf-8"), "llama.cpp adapter config")
+        payload = _strict_json_object(config_path.read_text(encoding="utf-8"), "llama.cpp adapter config")
     except OSError as error:
         raise ContractError(f"unable to read {CONFIG_ENVIRONMENT_VARIABLE}") from error
-    _require_exact_keys(raw, _CONFIG_FIELDS, "llama.cpp adapter config")
-    if raw["schema_version"] != CONFIG_SCHEMA_VERSION:
+    _require_exact_keys(payload, _CONFIG_FIELDS, "llama.cpp adapter config")
+    if payload["schema_version"] != CONFIG_SCHEMA_VERSION:
         raise ContractError("unsupported llama.cpp adapter config schema")
-    if raw["bridge_protocol"] != BRIDGE_PROTOCOL_VERSION:
+    if payload["bridge_protocol"] != BRIDGE_PROTOCOL_VERSION:
         raise ContractError("unsupported llama.cpp bridge protocol")
 
-    runtime = _require_mapping(raw["runtime"], "llama.cpp adapter config.runtime")
+    runtime = _require_mapping(payload["runtime"], "llama.cpp adapter config.runtime")
     _require_exact_keys(runtime, _RUNTIME_FIELDS, "llama.cpp adapter config.runtime")
-    require_int(runtime["n_ctx"], "llama.cpp adapter config.runtime.n_ctx", minimum=1)
-    require_int(runtime["n_batch"], "llama.cpp adapter config.runtime.n_batch", minimum=1)
-    require_int(runtime["n_gpu_layers"], "llama.cpp adapter config.runtime.n_gpu_layers", minimum=0)
-    if runtime["flash_attn"] not in {"auto", "enabled", "disabled"}:
-        raise ContractError(
-            "llama.cpp adapter config.runtime.flash_attn must be one of auto, enabled, disabled"
-        )
-    require_int(runtime["seed"], "llama.cpp adapter config.runtime.seed", minimum=0)
-    require_int(runtime["n_threads"], "llama.cpp adapter config.runtime.n_threads", minimum=1)
-    require_int(runtime["n_threads_batch"], "llama.cpp adapter config.runtime.n_threads_batch", minimum=1)
-    require_string(runtime["chat_template"], "llama.cpp adapter config.runtime.chat_template")
-    if runtime["thinking_mode"] != "disabled":
+    normalized_runtime = dict(runtime)
+    n_ctx = require_int(normalized_runtime["n_ctx"], "llama.cpp adapter config.runtime.n_ctx", minimum=1)
+    n_batch = require_int(normalized_runtime["n_batch"], "llama.cpp adapter config.runtime.n_batch", minimum=1)
+    if n_batch > n_ctx:
+        raise ContractError("llama.cpp adapter config.runtime.n_batch must not exceed n_ctx")
+    require_int(normalized_runtime["n_gpu_layers"], "llama.cpp adapter config.runtime.n_gpu_layers", minimum=0)
+    flash_attn = require_string(normalized_runtime["flash_attn"], "llama.cpp adapter config.runtime.flash_attn")
+    if flash_attn not in {"auto", "enabled", "disabled"}:
+        raise ContractError("llama.cpp adapter config.runtime.flash_attn must be auto, enabled, or disabled")
+    require_int(normalized_runtime["seed"], "llama.cpp adapter config.runtime.seed", minimum=0)
+    require_int(normalized_runtime["n_threads"], "llama.cpp adapter config.runtime.n_threads", minimum=1)
+    require_int(normalized_runtime["n_threads_batch"], "llama.cpp adapter config.runtime.n_threads_batch", minimum=1)
+    require_string(normalized_runtime["chat_template"], "llama.cpp adapter config.runtime.chat_template")
+    if normalized_runtime["thinking_mode"] != "disabled":
         raise ContractError("llama.cpp adapter config.runtime.thinking_mode must be disabled")
 
-    frozen_runtime = MappingProxyType(dict(runtime))
+    bridge_executable = _absolute_regular_path(payload["bridge_executable"], "bridge_executable", executable=True)
+    model_artifact = _absolute_regular_path(payload["model_artifact"], "model_artifact")
+    llama_cpp_library = _absolute_regular_path(payload["llama_cpp_library"], "llama_cpp_library")
+    llama_cpp_revision = require_string(payload["llama_cpp_revision"], "llama_cpp_revision")
     return _BridgeConfig(
         config_path=config_path,
-        bridge_executable=_absolute_regular_path(raw["bridge_executable"], "bridge_executable", executable=True),
-        model_artifact=_absolute_regular_path(raw["model_artifact"], "model_artifact"),
-        llama_cpp_library=_absolute_regular_path(raw["llama_cpp_library"], "llama_cpp_library"),
-        llama_cpp_revision=require_string(raw["llama_cpp_revision"], "llama_cpp_revision"),
-        runtime=frozen_runtime,
-        request_timeout_seconds=require_int(raw["request_timeout_seconds"], "request_timeout_seconds", minimum=1),
-        config_fingerprint=sha256(
+        bridge_executable=bridge_executable,
+        model_artifact=model_artifact,
+        llama_cpp_library=llama_cpp_library,
+        llama_cpp_revision=llama_cpp_revision,
+        runtime=MappingProxyType(normalized_runtime),
+        request_timeout_seconds=require_int(payload["request_timeout_seconds"], "request_timeout_seconds", minimum=1),
+        runtime_configuration_fingerprint=sha256(
             {
                 "schema_version": "pcss.llamacpp-runtime-config/v1",
-                "bridge_protocol": raw["bridge_protocol"],
-                "model_artifact": str(_absolute_regular_path(raw["model_artifact"], "model_artifact")),
-                "llama_cpp_library": str(_absolute_regular_path(raw["llama_cpp_library"], "llama_cpp_library")),
-                "llama_cpp_revision": raw["llama_cpp_revision"],
-                "runtime": dict(frozen_runtime),
+                "bridge_protocol": payload["bridge_protocol"],
+                "model_artifact": str(model_artifact),
+                "llama_cpp_library": str(llama_cpp_library),
+                "llama_cpp_revision": llama_cpp_revision,
+                "runtime": normalized_runtime,
             }
         ),
     )
 
 
-def _run_bridge(config: _BridgeConfig, arguments: tuple[str, ...], request: dict[str, Any] | None) -> dict[str, Any]:
+def _configuration(config: _BridgeConfig) -> dict[str, Any]:
+    return {
+        "model_artifact": str(config.model_artifact),
+        "llama_cpp_library": str(config.llama_cpp_library),
+        "llama_cpp_revision": config.llama_cpp_revision,
+        "runtime": dict(config.runtime),
+    }
+
+
+def _common_request(config: _BridgeConfig, operation: str) -> dict[str, Any]:
+    request = {"schema_version": REQUEST_SCHEMA_VERSION, "operation": operation, **_configuration(config)}
+    _require_exact_keys(request, _COMMON_REQUEST_FIELDS, "pcss_llama_bridge common request")
+    return request
+
+
+def _capability_request(config: _BridgeConfig) -> dict[str, Any]:
+    return _common_request(config, "capabilities")
+
+
+def _case_seed(case: VerifierCase) -> tuple[str, tuple[int, ...]]:
+    seed_id = getattr(case, "seed_id", None)
+    if not isinstance(seed_id, str) or not seed_id:
+        raise ContractError("TARGET_BACKEND verifier cases require a non-empty case.seed_id")
+    initial_context_tokens = getattr(case, "initial_context_tokens", None)
+    if not isinstance(initial_context_tokens, tuple) or not initial_context_tokens:
+        raise ContractError("TARGET_BACKEND verifier cases require non-empty case.initial_context_tokens")
+    for index, token in enumerate(initial_context_tokens):
+        require_int(token, f"case.initial_context_tokens[{index}]", minimum=0)
+    return seed_id, initial_context_tokens
+
+
+def _verify_request(config: _BridgeConfig, case: VerifierCase) -> tuple[dict[str, Any], str]:
+    seed_id, initial_context_tokens = _case_seed(case)
+    if not isinstance(case.include_bonus_on_full_accept, bool):
+        raise ContractError("case.include_bonus_on_full_accept must be a boolean")
+    request = {
+        **_common_request(config, "verify"),
+        "seed": {"seed_id": seed_id, "initial_context_tokens": list(initial_context_tokens)},
+        "case": {
+            "case_id": require_string(case.case_id, "case.case_id"),
+            "draft_tokens": list(case.draft_tokens),
+            "include_bonus_on_full_accept": case.include_bonus_on_full_accept,
+        },
+    }
+    _require_exact_keys(request, _VERIFY_REQUEST_FIELDS, "pcss_llama_bridge verify request")
+    _require_exact_keys(request["seed"], _VERIFY_SEED_FIELDS, "pcss_llama_bridge verify request.seed")
+    _require_exact_keys(request["case"], _VERIFY_CASE_FIELDS, "pcss_llama_bridge verify request.case")
+    return request, seed_id
+
+
+def _run_bridge(config: _BridgeConfig, arguments: tuple[str, ...], request: dict[str, Any]) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             (str(config.bridge_executable), *arguments),
-            input=None if request is None else canonical_json(request),
+            input=canonical_json(request) + "\n",
             capture_output=True,
             check=False,
             text=True,
             timeout=config.request_timeout_seconds,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as error:
         raise ContractError("pcss_llama_bridge process did not complete") from error
     if completed.returncode != 0:
-        raise ContractError("pcss_llama_bridge returned a non-zero exit status")
+        raise ContractError("pcss_llama_bridge process returned a non-zero exit status")
     return _strict_json_object(completed.stdout, "pcss_llama_bridge response")
 
 
-def _validate_capabilities(capabilities: dict[str, Any], config: _BridgeConfig, *, library_sha256: str, model_sha256: str) -> None:
-    _require_exact_keys(capabilities, _CAPABILITY_FIELDS, "pcss_llama_bridge capabilities")
-    if capabilities["schema_version"] != CAPABILITIES_SCHEMA_VERSION:
-        raise ContractError("pcss_llama_bridge capabilities schema is unsupported")
-    if capabilities["bridge_protocol"] != BRIDGE_PROTOCOL_VERSION:
-        raise ContractError("pcss_llama_bridge capabilities protocol does not match config")
-    if capabilities["operation"] != "verify_case":
-        raise ContractError("pcss_llama_bridge lacks verify_case capability")
-    if capabilities["generation_mode"] != _GENERATION_MODE:
-        raise ContractError("pcss_llama_bridge capability does not use deterministic greedy argmax")
-    if _require_sha256(
-        capabilities["runtime_configuration_fingerprint"],
-        "pcss_llama_bridge capabilities.runtime_configuration_fingerprint",
-    ) != config.config_fingerprint:
-        raise ContractError("pcss_llama_bridge capability is not bound to the configured runtime")
-
-    backend = _require_mapping(capabilities["backend"], "pcss_llama_bridge capabilities.backend")
-    _require_exact_keys(backend, _CAPABILITY_BACKEND_FIELDS, "pcss_llama_bridge capabilities.backend")
-    if backend["runtime"] != "llama.cpp":
-        raise ContractError("pcss_llama_bridge capability is not llama.cpp")
-    if backend["llama_cpp_revision"] != config.llama_cpp_revision:
-        raise ContractError("pcss_llama_bridge llama.cpp revision differs from config")
-    if _require_sha256(backend["library_sha256"], "pcss_llama_bridge capabilities.backend.library_sha256") != library_sha256:
-        raise ContractError("pcss_llama_bridge library hash differs from the configured library")
-    if _require_sha256(backend["model_artifact_sha256"], "pcss_llama_bridge capabilities.backend.model_artifact_sha256") != model_sha256:
-        raise ContractError("pcss_llama_bridge model hash differs from the configured model")
-
-    full_state = _require_mapping(capabilities["full_state"], "pcss_llama_bridge capabilities.full_state")
-    _require_exact_keys(full_state, _CAPABILITY_FULL_STATE_FIELDS, "pcss_llama_bridge capabilities.full_state")
-    if full_state["snapshot_api"] != "llama_state_get_data":
-        raise ContractError("pcss_llama_bridge does not declare full-state snapshot support")
-    if full_state["restore_api"] != "llama_state_set_data":
-        raise ContractError("pcss_llama_bridge does not declare full-state restore support")
-    if full_state["comparison"] != "byte_exact":
-        raise ContractError("pcss_llama_bridge full-state comparison is not byte exact")
-    if not isinstance(full_state["covered_components"], list) or tuple(full_state["covered_components"]) != _FULL_STATE_COMPONENTS:
-        raise ContractError("pcss_llama_bridge full-state capability has incomplete coverage")
-
-    probe = _require_mapping(capabilities["probe"], "pcss_llama_bridge capabilities.probe")
-    _require_exact_keys(probe, _CAPABILITY_PROBE_FIELDS, "pcss_llama_bridge capabilities.probe")
-    if not _require_bool(probe["model_loaded"], "pcss_llama_bridge capabilities.probe.model_loaded"):
-        raise ContractError("pcss_llama_bridge capability probe did not load the configured model")
-    if not _require_bool(probe["state_round_trip"], "pcss_llama_bridge capabilities.probe.state_round_trip"):
-        raise ContractError("pcss_llama_bridge capability probe did not complete a full-state round trip")
-    if probe["comparison"] != "byte_exact":
-        raise ContractError("pcss_llama_bridge capability probe is not byte exact")
-    if not isinstance(probe["covered_components"], list) or tuple(probe["covered_components"]) != _FULL_STATE_COMPONENTS:
-        raise ContractError("pcss_llama_bridge capability probe has incomplete full-state coverage")
-    before_digest = _require_sha256(probe["before_digest"], "pcss_llama_bridge capabilities.probe.before_digest")
-    after_digest = _require_sha256(probe["after_digest"], "pcss_llama_bridge capabilities.probe.after_digest")
-    if before_digest != after_digest:
-        raise ContractError("pcss_llama_bridge capability probe full-state round trip changed state bytes")
+def _validate_configuration_echo(value: object, config: _BridgeConfig, field: str) -> None:
+    configuration = _require_mapping(value, field)
+    _require_exact_keys(configuration, _CONFIGURATION_FIELDS, field)
+    if configuration != _configuration(config):
+        raise ContractError(f"{field} differs from explicit adapter configuration")
 
 
-def _tokens_from_case(case: VerifierCase) -> tuple[int, ...]:
-    value = getattr(case, "initial_context_tokens", ())
-    if not isinstance(value, tuple):
-        raise ContractError("case.initial_context_tokens must be a token tuple")
-    for index, token in enumerate(value):
-        require_int(token, f"case.initial_context_tokens[{index}]", minimum=0)
-    return value
-
-
-def _request_for_case(config: _BridgeConfig, case: VerifierCase) -> dict[str, Any]:
-    provenance = getattr(case, "reference_provenance", None)
-    reference_provenance: dict[str, Any] | None = None
-    if provenance is not None:
-        reference_provenance = {
-            "schema_version": provenance.schema_version,
-            "reference_method": provenance.reference_method,
-            "model_artifact_sha256": provenance.model_artifact_sha256,
-            "runtime_configuration_fingerprint": provenance.runtime_configuration_fingerprint,
-        }
-    return {
-        "schema_version": REQUEST_SCHEMA_VERSION,
-        "bridge_protocol": BRIDGE_PROTOCOL_VERSION,
-        "operation": "verify_case",
-        "model_artifact": str(config.model_artifact),
-        "llama_cpp_library": str(config.llama_cpp_library),
-        "llama_cpp_revision": config.llama_cpp_revision,
-        "runtime": dict(config.runtime),
-        "runtime_configuration_fingerprint": config.config_fingerprint,
-        "generation_mode": _GENERATION_MODE,
-        "reference": {
-            "generation_mode": _GENERATION_MODE,
-            "comparison": "byte_exact",
-            "full_state_components": list(_FULL_STATE_COMPONENTS),
-            "provenance": reference_provenance,
-        },
-        "case": {
-            "case_id": case.case_id,
-            "initial_context_tokens": list(_tokens_from_case(case)),
-            "draft_tokens": list(case.draft_tokens),
-            "k": case.k,
-            "include_bonus_on_full_accept": case.include_bonus_on_full_accept,
-        },
+def _validate_observed_context(value: object, config: _BridgeConfig, field: str) -> None:
+    observed = _require_mapping(value, field)
+    _require_exact_keys(observed, _OBSERVED_CONTEXT_FIELDS, field)
+    expected = {
+        "actual_n_ctx": config.runtime["n_ctx"],
+        "actual_n_batch": config.runtime["n_batch"],
+        "actual_n_threads": config.runtime["n_threads"],
+        "actual_n_threads_batch": config.runtime["n_threads_batch"],
     }
+    for name, expected_value in expected.items():
+        actual = require_int(observed[name], f"{field}.{name}", minimum=1)
+        if actual != expected_value:
+            raise ContractError(f"{field} differs from explicit adapter configuration")
 
 
-def _capability_request(config: _BridgeConfig) -> dict[str, Any]:
-    return {
-        "schema_version": REQUEST_SCHEMA_VERSION,
-        "bridge_protocol": BRIDGE_PROTOCOL_VERSION,
-        "operation": "capabilities",
-        "model_artifact": str(config.model_artifact),
-        "llama_cpp_library": str(config.llama_cpp_library),
-        "llama_cpp_revision": config.llama_cpp_revision,
-        "runtime": dict(config.runtime),
-        "runtime_configuration_fingerprint": config.config_fingerprint,
-        "generation_mode": _GENERATION_MODE,
-    }
+def _validate_shared_response_facts(response: Mapping[str, Any], config: _BridgeConfig, field: str) -> None:
+    if response["backend"] != "llama.cpp":
+        raise ContractError(f"{field} is not a llama.cpp result")
+    if response["generation_mode"] != _GENERATION_MODE or response["greedy_tie_break"] != _GREEDY_TIE_BREAK:
+        raise ContractError(f"{field} is not deterministic greedy argmax")
+    if response["state_export"] != "full_context_state/v1":
+        raise ContractError(f"{field} does not declare full-context state export")
+    if response["state_api"] != _STATE_API:
+        raise ContractError(f"{field} does not declare full llama state get/set")
+    if response["sampler_rng_state"] != _SAMPLER_RNG_STATE:
+        raise ContractError(f"{field} unexpectedly uses sampler or RNG state")
+    if response["declared_identity_fields"] != _DECLARED_IDENTITY_FIELDS:
+        raise ContractError(f"{field} has an unsupported identity declaration")
+    if _require_bool(response["chat_template_applied"], f"{field}.chat_template_applied"):
+        raise ContractError(f"{field} unexpectedly applied a chat template")
+    if _require_bool(response["thinking_mode_applied"], f"{field}.thinking_mode_applied"):
+        raise ContractError(f"{field} unexpectedly applied a thinking-mode policy")
+    _validate_configuration_echo(response["configuration"], config, f"{field}.configuration")
+    _validate_observed_context(response["observed_context"], config, f"{field}.observed_context")
 
 
-def _response_to_outcome(response: dict[str, Any], case: VerifierCase) -> AdapterOutcome:
-    _require_exact_keys(response, _RESPONSE_FIELDS, "pcss_llama_bridge verify response")
-    if response["schema_version"] != RESPONSE_SCHEMA_VERSION:
-        raise ContractError("pcss_llama_bridge verify response schema is unsupported")
-    if response["bridge_protocol"] != BRIDGE_PROTOCOL_VERSION or response["operation"] != "verify_case":
-        raise ContractError("pcss_llama_bridge verify response has an unsupported operation")
-    if response["generation_mode"] != _GENERATION_MODE:
-        raise ContractError("pcss_llama_bridge verify response does not use deterministic greedy argmax")
-    # The bridge must echo the runtime fingerprint that it was asked to use;
-    # otherwise a response from a stale/default configuration is ambiguous.
-    # Validation occurs in ``verify`` where the configured value is available.
+def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> tuple[Path, str]:
+    field = "pcss_llama_bridge capabilities response"
+    _require_exact_keys(response, _CAPABILITIES_RESPONSE_FIELDS, field)
+    if response["schema_version"] != CAPABILITIES_SCHEMA_VERSION or response["operation"] != "capabilities":
+        raise ContractError(f"{field} has an unsupported schema or operation")
+    if response["status"] != "ok":
+        raise ContractError(f"{field} is not successful")
+    _validate_shared_response_facts(response, config, field)
+    if not _require_bool(response["raw_token_ids"], f"{field}.raw_token_ids"):
+        raise ContractError(f"{field} did not preserve caller-supplied token ids")
+    if response["llama_c_api_version"] != "not-exposed-by-stable-c-api/v1":
+        raise ContractError(f"{field} has an unsupported C API identity")
+    for name in ("supports_gpu_offload", "supports_mmap", "supports_mlock"):
+        _require_bool(response[name], f"{field}.{name}")
+    vocabulary_size = require_int(response["vocabulary_size"], f"{field}.vocabulary_size", minimum=1)
+    probe_token = require_int(response["probe_token"], f"{field}.probe_token", minimum=0)
+    if probe_token >= vocabulary_size:
+        raise ContractError(f"{field} probe token is outside the reported vocabulary")
+    state_components = response["state_components"]
+    if not isinstance(state_components, list) or tuple(state_components) != _FULL_STATE_COMPONENTS:
+        raise ContractError(f"{field} has incomplete full-state coverage")
+    probe_digest = _require_sha256(response["probe_state_sha256"], f"{field}.probe_state_sha256")
+    restored_digest = _require_sha256(response["restored_state_sha256"], f"{field}.restored_state_sha256")
+    probe_bytes = require_int(response["probe_state_bytes"], f"{field}.probe_state_bytes", minimum=1)
+    restored_bytes = require_int(response["restored_state_bytes"], f"{field}.restored_state_bytes", minimum=1)
+    if not _require_bool(response["state_round_trip_byte_exact"], f"{field}.state_round_trip_byte_exact"):
+        raise ContractError(f"{field} did not complete a byte-exact full-state round trip")
+    if probe_digest != restored_digest or probe_bytes != restored_bytes:
+        raise ContractError(f"{field} full-state round trip changed bytes")
+    operations = response["operations"]
+    if not isinstance(operations, list) or tuple(operations) != ("capabilities", "reference", "verify"):
+        raise ContractError(f"{field} has an incomplete operation set")
 
-    outcome = _require_mapping(response["outcome"], "pcss_llama_bridge verify response.outcome")
-    _require_exact_keys(outcome, _OUTCOME_FIELDS, "pcss_llama_bridge verify response.outcome")
-    accepted = require_int(outcome["accepted_draft_tokens"], "bridge outcome.accepted_draft_tokens", minimum=0)
+    loaded_library = _absolute_regular_path(
+        response["loaded_llama_cpp_library_path"], f"{field}.loaded_llama_cpp_library_path"
+    )
+    if loaded_library != config.llama_cpp_library:
+        raise ContractError(f"{field} loaded library path differs from configured library")
+    loaded_library_sha256 = _file_sha256(loaded_library)
+    if loaded_library_sha256 != _file_sha256(config.llama_cpp_library):
+        raise ContractError(f"{field} loaded library hash differs from configured library")
+    return loaded_library, loaded_library_sha256
+
+
+def _response_token(value: object, field: str, vocabulary_size: int) -> int:
+    token = require_int(value, field, minimum=0)
+    if token >= vocabulary_size:
+        raise ContractError(f"{field} is outside the reported vocabulary")
+    return token
+
+
+def _validate_verify_response(
+    response: dict[str, Any],
+    config: _BridgeConfig,
+    case: VerifierCase,
+    seed_id: str,
+) -> AdapterOutcome:
+    field = "pcss_llama_bridge verify response"
+    _require_exact_keys(response, _VERIFY_RESPONSE_FIELDS, field)
+    if response["schema_version"] != VERIFY_SCHEMA_VERSION or response["operation"] != "verify":
+        raise ContractError(f"{field} has an unsupported schema or operation")
+    if response["status"] != "ok":
+        raise ContractError(f"{field} is not a successful serial-vs-batch verification")
+    _validate_shared_response_facts(response, config, field)
+    if response["reconstruction"] != "serial-vs-one-batch/v1":
+        raise ContractError(f"{field} has an unsupported reconstruction method")
+    if response["tokenization_boundary"] != "caller-supplied-raw-token-ids/v1":
+        raise ContractError(f"{field} has an unexpected tokenization boundary")
+    if response["seed_id"] != seed_id or response["case_id"] != case.case_id:
+        raise ContractError(f"{field} seed or case identity differs from request")
+
+    vocabulary_size = require_int(response["vocabulary_size"], f"{field}.vocabulary_size", minimum=1)
+    target_tokens = _require_tokens(response["target_tokens"], f"{field}.target_tokens", nonempty=True)
+    if len(target_tokens) != case.k + 1:
+        raise ContractError(f"{field} target token count differs from draft length plus one")
+    if any(token >= vocabulary_size for token in target_tokens):
+        raise ContractError(f"{field} target tokens are outside the reported vocabulary")
+    fixture_target = tuple(case.target_tokens)
+    if len(fixture_target) < case.k or len(fixture_target) > len(target_tokens):
+        raise ContractError("fixture target token count is incompatible with native verification")
+    if target_tokens[: len(fixture_target)] != fixture_target:
+        raise ContractError("native serial greedy target prefix differs from fixture target tokens")
+
+    accepted = require_int(response["accepted_draft_tokens"], f"{field}.accepted_draft_tokens", minimum=0)
     if accepted > case.k:
-        raise ContractError("bridge outcome accepts more draft tokens than k")
-    correction = outcome["correction_token"]
-    if correction is not None:
-        correction = require_int(correction, "bridge outcome.correction_token", minimum=0)
-    bonus = outcome["bonus_token"]
-    if bonus is not None:
-        bonus = require_int(bonus, "bridge outcome.bonus_token", minimum=0)
-    committed = _require_tokens(outcome["committed_tokens"], "bridge outcome.committed_tokens")
-    mutable_state_digest = _require_sha256(outcome["mutable_state_digest"], "bridge outcome.mutable_state_digest")
-
+        raise ContractError(f"{field} accepts more draft tokens than k")
+    expected_accepted = 0
+    for draft_token, target_token in zip(case.draft_tokens, target_tokens):
+        if draft_token != target_token:
+            break
+        expected_accepted += 1
+    if accepted != expected_accepted:
+        raise ContractError(f"{field} accepted-draft count disagrees with its target tokens")
+    correction = response["correction_token"]
+    bonus = response["bonus_token"]
     if accepted < case.k:
-        if correction is None or bonus is not None:
-            raise ContractError("partial bridge acceptance requires one correction and no bonus")
-        expected_committed = case.draft_tokens[:accepted] + (correction,)
+        expected_correction = target_tokens[accepted]
+        if correction != expected_correction or bonus is not None:
+            raise ContractError(f"{field} correction or bonus disagrees with target tokens")
+        committed_expected = case.draft_tokens[:accepted] + (expected_correction,)
     else:
-        if correction is not None or (bonus is not None and not case.include_bonus_on_full_accept):
-            raise ContractError("full bridge acceptance has an invalid correction or bonus")
-        expected_committed = case.draft_tokens + (() if bonus is None else (bonus,))
-    if committed != expected_committed:
-        raise ContractError("bridge committed tokens do not match its acceptance outcome")
+        if correction is not None:
+            raise ContractError(f"{field} full acceptance has a correction token")
+        expected_bonus = target_tokens[case.k] if case.include_bonus_on_full_accept else None
+        if bonus != expected_bonus:
+            raise ContractError(f"{field} bonus token disagrees with target tokens")
+        committed_expected = case.draft_tokens + (() if expected_bonus is None else (expected_bonus,))
+    if correction is not None:
+        _response_token(correction, f"{field}.correction_token", vocabulary_size)
+    if bonus is not None:
+        _response_token(bonus, f"{field}.bonus_token", vocabulary_size)
+    committed = _require_tokens(response["committed_tokens"], f"{field}.committed_tokens", nonempty=True)
+    if committed != committed_expected:
+        raise ContractError(f"{field} committed tokens disagree with its acceptance outcome")
+    if committed != case.expected_committed_tokens:
+        raise ContractError("native committed tokens differ from the fixture expectation")
 
-    comparison = _require_mapping(response["state_comparison"], "pcss_llama_bridge verify response.state_comparison")
-    _require_exact_keys(comparison, _STATE_COMPARISON_FIELDS, "pcss_llama_bridge verify response.state_comparison")
-    if comparison["comparison"] != "byte_exact":
-        raise ContractError("bridge verify response does not use byte-exact state comparison")
-    reference_digest = _require_sha256(comparison["reference_digest"], "bridge state comparison.reference_digest")
-    candidate_digest = _require_sha256(comparison["candidate_digest"], "bridge state comparison.candidate_digest")
-    equal = _require_bool(comparison["equal"], "bridge state comparison.equal")
-    if mutable_state_digest != candidate_digest:
-        raise ContractError("bridge mutable-state digest differs from candidate state comparison digest")
-    if equal and reference_digest != candidate_digest:
-        raise ContractError("bridge claims equal full state with differing byte-exact digests")
-    if not equal and reference_digest == candidate_digest:
-        raise ContractError("bridge claims unequal full state with identical byte-exact digests")
+    _require_sha256(response["prompt_state_sha256"], f"{field}.prompt_state_sha256")
+    require_int(response["prompt_state_bytes"], f"{field}.prompt_state_bytes", minimum=1)
+    serial_digest = _require_sha256(response["serial_state_sha256"], f"{field}.serial_state_sha256")
+    batched_digest = _require_sha256(response["batched_state_sha256"], f"{field}.batched_state_sha256")
+    serial_bytes = require_int(response["serial_state_bytes"], f"{field}.serial_state_bytes", minimum=1)
+    batched_bytes = require_int(response["batched_state_bytes"], f"{field}.batched_state_bytes", minimum=1)
+    serial_mutable = _require_sha256(
+        response["serial_mutable_state_digest"], f"{field}.serial_mutable_state_digest"
+    )
+    speculative_mutable = _require_sha256(
+        response["speculative_mutable_state_digest"], f"{field}.speculative_mutable_state_digest"
+    )
+    mutable_state_digest = _require_sha256(response["mutable_state_digest"], f"{field}.mutable_state_digest")
+    if not _require_bool(response["state_matches"], f"{field}.state_matches"):
+        raise ContractError(f"{field} serial and batched state did not match")
+    if serial_digest != batched_digest or serial_bytes != batched_bytes:
+        raise ContractError(f"{field} serial and batched full-state digests differ")
+    if serial_mutable != serial_digest or speculative_mutable != batched_digest or mutable_state_digest != serial_digest:
+        raise ContractError(f"{field} mutable-state digests disagree with full-state digests")
+    if mutable_state_digest != case.expected_state_digest:
+        raise ContractError("native mutable-state digest differs from the fixture expectation")
+    serial_next = _response_token(response["serial_next_token"], f"{field}.serial_next_token", vocabulary_size)
+    batched_next = _response_token(response["batched_next_token"], f"{field}.batched_next_token", vocabulary_size)
+    if not _require_bool(response["continuation_matches"], f"{field}.continuation_matches"):
+        raise ContractError(f"{field} serial and batched continuation did not match")
+    if serial_next != batched_next:
+        raise ContractError(f"{field} continuation tokens differ despite a match claim")
 
     return AdapterOutcome(
         accepted_draft_tokens=accepted,
@@ -460,7 +599,7 @@ def _response_to_outcome(response: dict[str, Any], case: VerifierCase) -> Adapte
 
 
 class LlamaCppBridgeAdapter:
-    """Future target adapter that refuses a backend claim without an explicit bridge proof."""
+    """Target adapter that freezes one successful native capability probe per instance."""
 
     name = "pcss_llama_bridge"
 
@@ -471,17 +610,15 @@ class LlamaCppBridgeAdapter:
 
     def _prepare(self) -> _PreparedBridge:
         config = _load_config(self._environment)
-        library_sha256 = _file_sha256(config.llama_cpp_library)
-        model_sha256 = _file_sha256(config.model_artifact)
-        bridge_sha256 = _file_sha256(config.bridge_executable)
         capabilities = _run_bridge(config, ("--pcss-capabilities",), _capability_request(config))
-        _validate_capabilities(capabilities, config, library_sha256=library_sha256, model_sha256=model_sha256)
+        loaded_library_path, loaded_library_sha256 = _validate_capabilities(capabilities, config)
         return _PreparedBridge(
             config=config,
             capabilities=capabilities,
-            bridge_sha256=bridge_sha256,
-            model_sha256=model_sha256,
-            library_sha256=library_sha256,
+            bridge_sha256=_file_sha256(config.bridge_executable),
+            model_sha256=_file_sha256(config.model_artifact),
+            loaded_library_path=loaded_library_path,
+            loaded_library_sha256=loaded_library_sha256,
         )
 
     def availability(self) -> AdapterAvailability:
@@ -492,7 +629,9 @@ class LlamaCppBridgeAdapter:
         except ContractError as error:
             self._availability = AdapterAvailability("NOT_RUN", str(error))
         else:
-            self._availability = AdapterAvailability("TARGET_BACKEND", "pcss_llama_bridge full-state capability verified")
+            self._availability = AdapterAvailability(
+                "TARGET_BACKEND", "native llama.cpp full-state capability probe verified"
+            )
         return self._availability
 
     def _frozen_prepared(self) -> _PreparedBridge:
@@ -511,26 +650,16 @@ class LlamaCppBridgeAdapter:
             "model_artifact_path": str(prepared.config.model_artifact),
             "llama_cpp_build_fingerprint": prepared.build_fingerprint,
         }
-        # The verifier contract is being extended to bind the runtime config separately.
-        # Use it when present while retaining compatibility with the current v1 contract.
         if "runtime_configuration_fingerprint" in getattr(TargetAdapterBinding, "__dataclass_fields__", {}):
             values["schema_version"] = "pcss.verifier-adapter-binding/v2"
-            values["runtime_configuration_fingerprint"] = prepared.config.config_fingerprint
+            values["runtime_configuration_fingerprint"] = prepared.config.runtime_configuration_fingerprint
         return TargetAdapterBinding(**values)
 
     def verify(self, case: VerifierCase) -> AdapterOutcome:
         prepared = self._frozen_prepared()
-        response = _run_bridge(
-            prepared.config,
-            ("--pcss-verify-case",),
-            _request_for_case(prepared.config, case),
-        )
-        if _require_sha256(
-            response.get("runtime_configuration_fingerprint"),
-            "pcss_llama_bridge verify response.runtime_configuration_fingerprint",
-        ) != prepared.config.config_fingerprint:
-            raise ContractError("pcss_llama_bridge verify response is not bound to the configured runtime")
-        return _response_to_outcome(response, case)
+        request, seed_id = _verify_request(prepared.config, case)
+        response = _run_bridge(prepared.config, ("--pcss-verify-case",), request)
+        return _validate_verify_response(response, prepared.config, case, seed_id)
 
 
 def create_adapter() -> LlamaCppBridgeAdapter:
