@@ -46,6 +46,7 @@ _ADAPTER_BINDING_KEYS = {
     "backend_binary_sha256",
     "model_artifact_sha256",
     "llama_cpp_build_fingerprint",
+    "runtime_configuration_fingerprint",
 }
 
 
@@ -113,7 +114,7 @@ def _validate_host_identity(value: Any) -> None:
 def _validate_adapter_binding(value: Any) -> None:
     binding = require_mapping(value, "manifest.verifier_gate.adapter_binding")
     require_exact_keys(binding, _ADAPTER_BINDING_KEYS, "manifest.verifier_gate.adapter_binding")
-    if binding["schema_version"] != "pcss.verifier-adapter-binding/v1":
+    if binding["schema_version"] != "pcss.verifier-adapter-binding/v2":
         raise ContractError("unsupported manifest.verifier_gate.adapter_binding.schema_version")
     for key in _ADAPTER_BINDING_KEYS - {"schema_version"}:
         _require_sha256(binding[key], f"manifest.verifier_gate.adapter_binding.{key}")

@@ -117,13 +117,18 @@ class TargetAdapterBinding:
     backend_binary_path: str
     model_artifact_path: str
     llama_cpp_build_fingerprint: str
+    runtime_configuration_fingerprint: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != "pcss.verifier-adapter-binding/v1":
+        if self.schema_version != "pcss.verifier-adapter-binding/v2":
             raise ContractError("unsupported target adapter binding schema")
         for field in ("adapter_source_path", "backend_binary_path", "model_artifact_path"):
             require_string(getattr(self, field), f"target_adapter_binding.{field}")
         _sha256(self.llama_cpp_build_fingerprint, "target_adapter_binding.llama_cpp_build_fingerprint")
+        _sha256(
+            self.runtime_configuration_fingerprint,
+            "target_adapter_binding.runtime_configuration_fingerprint",
+        )
 
 
 @dataclass(frozen=True, slots=True)

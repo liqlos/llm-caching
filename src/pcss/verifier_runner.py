@@ -215,6 +215,7 @@ def _observed_binding(adapter: VerifierAdapter, binding: TargetAdapterBinding) -
         "backend_binary_sha256": file_sha256(backend_path),
         "model_artifact_sha256": file_sha256(model_path),
         "llama_cpp_build_fingerprint": binding.llama_cpp_build_fingerprint,
+        "runtime_configuration_fingerprint": binding.runtime_configuration_fingerprint,
     }
 
 

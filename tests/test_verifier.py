@@ -6,6 +6,7 @@ from pathlib import Path
 from pcss.verifier import (
     AdapterAvailability,
     ScriptedFixtureAdapter,
+    TargetAdapterBinding,
     UnavailableAdapter,
     VerifierCase,
     VerifierHarness,
@@ -102,3 +103,15 @@ def test_target_adapter_cannot_run_through_harness_without_permit() -> None:
     assert receipt.status == "NOT_RUN"
     assert receipt.execution_class == "NOT_RUN"
     assert adapter.verify_calls == 0
+
+
+def test_target_binding_requires_a_hashed_immutable_runtime_configuration() -> None:
+    binding = TargetAdapterBinding(
+        schema_version="pcss.verifier-adapter-binding/v2",
+        adapter_source_path="/tmp/adapter.py",
+        backend_binary_path="/tmp/bridge",
+        model_artifact_path="/tmp/model.gguf",
+        llama_cpp_build_fingerprint="a" * 64,
+        runtime_configuration_fingerprint="b" * 64,
+    )
+    assert binding.runtime_configuration_fingerprint == "b" * 64

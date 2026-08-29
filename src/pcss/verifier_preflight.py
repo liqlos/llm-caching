@@ -136,6 +136,8 @@ def preflight_target_observation(
                 "adapter_source": binding["adapter_source_sha256"],
                 "backend_binary": binding["backend_binary_sha256"],
                 "model_artifact": binding["model_artifact_sha256"],
+                "llama_cpp_build": binding["llama_cpp_build_fingerprint"],
+                "runtime_configuration": binding["runtime_configuration_fingerprint"],
             }
         )
     return make_receipt(

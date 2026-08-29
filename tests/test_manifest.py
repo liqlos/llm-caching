@@ -58,11 +58,12 @@ def observed_verifier_gate() -> dict:
         "observation_status": "observed",
         "host_identity": host_identity,
         "adapter_binding": {
-            "schema_version": "pcss.verifier-adapter-binding/v1",
+            "schema_version": "pcss.verifier-adapter-binding/v2",
             "adapter_source_sha256": "a" * 64,
             "backend_binary_sha256": "b" * 64,
             "model_artifact_sha256": "c" * 64,
             "llama_cpp_build_fingerprint": "d" * 64,
+            "runtime_configuration_fingerprint": "e" * 64,
         },
     }
 

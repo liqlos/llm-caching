@@ -45,7 +45,8 @@ The verifier-suite entry point is:
 MODULE:CALLABLE must construct an object with `name`, `availability()`, and
 `verify(case)`. A target adapter additionally exposes `target_binding()`, which
 returns the declared adapter-source, backend-binary, and model-artifact paths
-plus the llama.cpp build fingerprint. The runner requires the declared adapter
+plus the llama.cpp build fingerprint and the immutable runtime-configuration
+fingerprint. The runner requires the declared adapter
 source to equal its inspected adapter source, hashes all three regular files
 itself, compares them to the observed manifest gate, and mints the permit
 needed before any target `verify()` call. Only that authorized
@@ -114,7 +115,10 @@ Do not fabricate, hand-edit, or reuse either nested value. The runner observes
 the host again for every suite, recomputes the file hashes, and requires exact
 equality with the manifest. It also requires
 `model_artifact.sha256 == adapter_binding.model_artifact_sha256` and
-`llama_cpp.fingerprint == adapter_binding.llama_cpp_build_fingerprint`. A
+`llama_cpp.fingerprint == adapter_binding.llama_cpp_build_fingerprint`. The
+adapter binding also contains the fingerprint of its explicit runtime
+configuration (template, generation, context/KV, and bridge settings); a
+configuration edit after preflight is a gate mismatch. A
 mismatch is a `NOT_RUN` authorization failure, not a retryable test failure.
 
 ### Target fixture gate
