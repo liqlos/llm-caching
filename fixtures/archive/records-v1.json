@@ -1,0 +1,12 @@
+[
+  {
+    "record_id": "alpha",
+    "tokens": [1, 2, 3, 4, 5, 6],
+    "metadata": {"source": "fixture", "ordinal": 1}
+  },
+  {
+    "record_id": "beta",
+    "tokens": [3, 4, 5, 6, 7],
+    "metadata": {"source": "fixture", "ordinal": 2}
+  }
+]
