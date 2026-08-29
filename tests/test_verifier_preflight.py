@@ -105,3 +105,58 @@ def test_preflight_writer_is_immutable_and_preserves_not_run_payload(tmp_path: P
     assert payload["payload"]["schema_version"] == "pcss.m4-target-observation/v1"
     with pytest.raises(ContractError, match="already exists"):
         preflight.write_target_observation(output, receipt)
+
+
+def test_cli_writes_compact_report_only_after_raw_not_run_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = CountingUnavailableAdapter()
+    monkeypatch.setattr(preflight, "_load_adapter", lambda spec: adapter)
+    raw_output = tmp_path / "target-observation.json"
+    report_output = tmp_path / "target-observation.md"
+
+    exit_code = preflight.main(
+        (
+            "--adapter",
+            "tests:adapter",
+            "--output",
+            str(raw_output),
+            "--report",
+            str(report_output),
+            "--repository-root",
+            str(ROOT),
+        )
+    )
+
+    assert exit_code == 1
+    assert adapter.verify_calls == 0
+    raw = json.loads(raw_output.read_text())
+    assert raw["payload"]["observation_status"] == "not_run"
+    report = report_output.read_text()
+    assert "# PCSS target observation preflight" in report
+    assert "Evidence class: `NOT_RUN`" in report
+    assert "Raw result: `target-observation.json`" in report
+
+
+def test_cli_rejects_report_path_that_would_replace_raw_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = CountingUnavailableAdapter()
+    monkeypatch.setattr(preflight, "_load_adapter", lambda spec: adapter)
+    output = tmp_path / "target-observation.json"
+
+    with pytest.raises(ContractError, match="must not replace"):
+        preflight.main(
+            (
+                "--adapter",
+                "tests:adapter",
+                "--output",
+                str(output),
+                "--report",
+                str(output),
+                "--repository-root",
+                str(ROOT),
+            )
+        )
+    assert not output.exists()
+    assert adapter.verify_calls == 0

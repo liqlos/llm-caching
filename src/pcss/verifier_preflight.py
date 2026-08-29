@@ -19,6 +19,7 @@ from .results import (
     make_receipt,
     recorded_module_command,
     resolve_git_revision,
+    write_compact_report,
     write_raw_result,
 )
 from .verifier import AdapterAvailability, VerifierAdapter
@@ -195,6 +196,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--adapter", required=True, help="MODULE:CALLABLE factory for a future target adapter")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="optional compact report written only after the immutable raw observation",
+    )
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
     command_arguments = tuple(argv if argv is not None else sys.argv[1:])
     args = parser.parse_args(command_arguments)
@@ -204,7 +210,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         repository_root=args.repository_root.resolve(),
         command_arguments=command_arguments,
     )
+    if args.report is not None and args.report.resolve() == args.output.resolve():
+        raise ContractError("--report must not replace the immutable raw observation")
     write_target_observation(args.output, receipt)
+    if args.report is not None:
+        write_compact_report(
+            args.report,
+            raw_result=args.output,
+            title="PCSS target observation preflight",
+        )
     return 0 if receipt.payload["observation_status"] == "observed" else 1
 
 
