@@ -36,7 +36,7 @@ The runtime request shape is deliberately explicit:
     "n_threads": 4,
     "n_threads_batch": 4,
     "chat_template": "caller-pretokenized/v1",
-    "thinking_mode": "caller-controlled/v1"
+    "thinking_mode": "disabled"
   }
 }
 ~~~
@@ -45,7 +45,9 @@ flash_attn is one of auto, enabled, or disabled. The bridge loads
 model_artifact, sets n_gpu_layers, n_ctx, n_batch, thread counts, and
 flash-attention mode through the C API. It only echoes llama_cpp_library and
 llama_cpp_revision; caller-side binding/provenance code must validate those
-paths and revisions independently.
+paths and revisions independently. thinking_mode must be exactly disabled: the
+bridge accepts only raw token IDs and will not apply a chat template or any
+reasoning policy.
 
 ## Capabilities
 
@@ -61,7 +63,7 @@ top-level fields are:
 ~~~text
 schema_version, operation, status, backend, state_export, generation_mode,
 greedy_tie_break, raw_token_ids, llama_c_api_version, supports_gpu_offload,
-supports_mmap, supports_mlock, vocabulary_size, configuration,
+loaded_llama_cpp_library_path, supports_mmap, supports_mlock, vocabulary_size, configuration,
 observed_context, state_components, state_api, sampler_rng_state, probe_token,
 probe_state_sha256, probe_state_bytes, restored_state_sha256,
 restored_state_bytes, state_round_trip_byte_exact, operations,
@@ -70,6 +72,10 @@ declared_identity_fields, chat_template_applied, thinking_mode_applied
 
 configuration is exactly the caller's
 {model_artifact,llama_cpp_library,llama_cpp_revision,runtime} object.
+loaded_llama_cpp_library_path is obtained from dladdr(&llama_backend_init) and
+canonicalized with realpath when available. The harness must hash this observed
+path and require it to match its configured library before treating capability
+evidence as target-backend evidence.
 observed_context contains the C-API-reported actual_n_ctx, actual_n_batch,
 actual_n_threads, and actual_n_threads_batch. The bridge does not create a
 sampler or RNG: successful capability output explicitly says

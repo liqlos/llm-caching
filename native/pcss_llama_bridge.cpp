@@ -7,6 +7,10 @@
 
 #include <llama.h>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <dlfcn.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -801,6 +805,9 @@ RequestConfig parse_config(const Json::Object & object) {
     runtime_config.n_threads_batch = required_i32(runtime, "n_threads_batch", 1);
     runtime_config.chat_template = required_string(runtime, "chat_template");
     runtime_config.thinking_mode = required_string(runtime, "thinking_mode");
+    if (runtime_config.thinking_mode != "disabled") {
+        throw BridgeError("invalid_request", "runtime.thinking_mode must be disabled");
+    }
     if (runtime_config.n_batch > runtime_config.n_ctx) {
         throw BridgeError("invalid_request", "runtime.n_batch must not exceed runtime.n_ctx");
     }
@@ -1131,6 +1138,34 @@ Json::Object result_base(
     return result;
 }
 
+std::string loaded_llama_cpp_library_path() {
+#if defined(__APPLE__) || defined(__linux__)
+    Dl_info information{};
+    const auto function_address = reinterpret_cast<const void *>(
+        reinterpret_cast<std::uintptr_t>(&llama_backend_init)
+    );
+    if (dladdr(function_address, &information) == 0 || information.dli_fname == nullptr ||
+        information.dli_fname[0] == '\0') {
+        throw BridgeError("backend_unavailable", "could not identify the loaded llama.cpp library");
+    }
+
+    // `dladdr` normally reports an absolute dynamic-loader path. Resolve a
+    // symlink when possible so the caller can hash the actual loaded file.
+    char * const canonical_path = realpath(information.dli_fname, nullptr);
+    if (canonical_path != nullptr) {
+        const std::string result(canonical_path);
+        std::free(canonical_path);
+        return result;
+    }
+    return std::string(information.dli_fname);
+#else
+    throw BridgeError(
+        "backend_unavailable",
+        "loaded llama.cpp library identity is unsupported on this platform"
+    );
+#endif
+}
+
 struct HandledResponse {
     Json payload;
     bool successful = false;
@@ -1198,6 +1233,7 @@ HandledResponse capabilities(const Json::Object & request) {
     result["greedy_tie_break"] = Json("lowest-token-id/v1");
     result["raw_token_ids"] = Json(true);
     result["llama_c_api_version"] = Json("not-exposed-by-stable-c-api/v1");
+    result["loaded_llama_cpp_library_path"] = Json(loaded_llama_cpp_library_path());
     result["supports_gpu_offload"] = Json(llama_supports_gpu_offload());
     result["supports_mmap"] = Json(llama_supports_mmap());
     result["supports_mlock"] = Json(llama_supports_mlock());
