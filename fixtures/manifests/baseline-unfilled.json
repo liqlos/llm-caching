@@ -1,0 +1,17 @@
+{
+  "schema_version": "pcss.manifest/v1",
+  "run_id": "baseline-unfilled",
+  "evidence_class": "NOT_RUN",
+  "target": {
+    "hardware": {"observation_status": "not_observed", "value": null},
+    "operating_system": {"observation_status": "not_observed", "value": null}
+  },
+  "model_artifact": {"observation_status": "not_observed", "artifact_uri": null, "sha256": null},
+  "quantization": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "tokenizer": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "chat_template": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "generation_protocol": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "llama_cpp": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "context_kv": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "benchmark": {"observation_status": "not_observed", "fingerprint": null, "parameters": null}
+}

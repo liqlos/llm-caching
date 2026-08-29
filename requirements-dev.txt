@@ -1,0 +1,6 @@
+# Fully pinned test-only dependencies. Runtime code uses the Python standard library.
+iniconfig==2.3.0
+packaging==26.1
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.1.1

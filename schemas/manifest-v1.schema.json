@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pcss.local/schemas/manifest-v1.schema.json",
+  "title": "PCSS baseline evidence manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "evidence_class", "target", "model_artifact", "quantization", "tokenizer", "chat_template", "generation_protocol", "llama_cpp", "context_kv", "benchmark"],
+  "properties": {
+    "schema_version": {"const": "pcss.manifest/v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "evidence_class": {"enum": ["SIMULATOR", "LOCAL_MEASURED", "NOT_RUN"]},
+    "target": {"$ref": "#/$defs/target"},
+    "model_artifact": {"$ref": "#/$defs/model"},
+    "quantization": {"$ref": "#/$defs/protocol"},
+    "tokenizer": {"$ref": "#/$defs/protocol"},
+    "chat_template": {"$ref": "#/$defs/protocol"},
+    "generation_protocol": {"$ref": "#/$defs/protocol"},
+    "llama_cpp": {"$ref": "#/$defs/protocol"},
+    "context_kv": {"$ref": "#/$defs/protocol"},
+    "benchmark": {"$ref": "#/$defs/protocol"}
+  },
+  "$defs": {
+    "target": {"type": "object", "additionalProperties": false, "required": ["hardware", "operating_system"], "properties": {"hardware": {"$ref": "#/$defs/observed_value"}, "operating_system": {"$ref": "#/$defs/observed_value"}}},
+    "observed_value": {"type": "object", "additionalProperties": false, "required": ["observation_status", "value"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "value": {}}},
+    "model": {"type": "object", "additionalProperties": false, "required": ["observation_status", "artifact_uri", "sha256"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "artifact_uri": {"type": ["string", "null"]}, "sha256": {"type": ["string", "null"]}}},
+    "protocol": {"type": "object", "additionalProperties": false, "required": ["observation_status", "fingerprint", "parameters"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "fingerprint": {"type": ["string", "null"]}, "parameters": {"type": ["object", "null"]}}}
+  }
+}

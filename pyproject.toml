@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69,<70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pcss-foundation"
+version = "0.1.0"
+description = "Host-independent, falsification-first PCSS replay foundation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "iniconfig==2.3.0",
+  "packaging==26.1",
+  "pluggy==1.6.0",
+  "Pygments==2.20.0",
+  "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
