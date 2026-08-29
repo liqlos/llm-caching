@@ -40,7 +40,8 @@ request = json.loads(sys.stdin.read())
 context = request["seed"]["initial_context_tokens"]
 steps = request["seed"]["steps"]
 vocabulary_size = 29 if MODE != "one-token-vocabulary" else 1
-target_tokens = [(context[-1] + index + 1) % vocabulary_size for index in range(steps)]
+prefill_offset = len(context) if MODE == "prefill-sensitive" else 0
+target_tokens = [(context[-1] + prefill_offset + index + 1) % vocabulary_size for index in range(steps)]
 state = hashlib.sha256(json.dumps(
     {{"context": context, "target_tokens": target_tokens}}, sort_keys=True, separators=(",", ":")
 ).encode("utf-8")).hexdigest()
@@ -229,9 +230,22 @@ def test_builds_all_v3_fixture_suites_from_real_bridge_reference(tmp_path: Path,
     mixed = suite_cases["long_mixed"]
     assert len(mixed) == 1
     assert len(mixed[0].initial_context_tokens) == 7
-    assert mixed[0].seed_id == "alpha:reconstructed"
+    assert mixed[0].seed_id == "alpha"
     assert mixed[0].draft_tokens[0] == mixed[0].target_tokens[0]
     assert mixed[0].draft_tokens[1] != mixed[0].target_tokens[1]
+
+
+def test_long_mixed_reanchors_to_the_reconstructed_prefill_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, _, fixture_directory, _, _ = _build(tmp_path, monkeypatch=monkeypatch, bridge_mode="prefill-sensitive")
+
+    mixed = load_cases(fixture_directory / "long-mixed.v3.json")
+
+    assert len(mixed) == 1
+    assert mixed[0].seed_id == "alpha"
+    assert mixed[0].initial_context_tokens == (4, 8, 15, 19, 20, 21, 22)
+    assert mixed[0].target_tokens == (1, 2, 3)
 
 
 @pytest.mark.parametrize("bridge_mode", ["malformed", "wrong-model", "wrong-length"])

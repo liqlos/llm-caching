@@ -647,21 +647,23 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             )
 
         plan = seeds.long_mixed
-        trajectory = _run_reference(
+        history = _run_reference(
             config,
             seed_id=seed_id,
             context=initial_context,
-            steps=plan.context_steps + plan.k,
+            steps=plan.context_steps,
         )
-        reconstructed_context = initial_context + trajectory.target_tokens[: plan.context_steps]
-        continuation = trajectory.target_tokens[plan.context_steps :]
+        reconstructed_context = initial_context + history.target_tokens
+        # The verifier receives reconstructed_context as a new prefill.  Its
+        # continuation must come from that exact prefill boundary, rather than
+        # from a slice of the serial trajectory that produced the history.
         reconstructed = _run_reference(
             config,
-            seed_id=f"{seed_id}:reconstructed",
+            seed_id=seed_id,
             context=reconstructed_context,
             steps=plan.k,
         )
-        _require_prefix(reconstructed, continuation, f"long-mixed reconstructed seed {seed_id}")
+        continuation = reconstructed.target_tokens
         mixed_wrong = _distinct_rejection_token(
             continuation[plan.rejection_position], reconstructed.vocabulary_size
         )
@@ -672,7 +674,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
         )
         mixed_commit = _run_reference(
             config,
-            seed_id=f"{seed_id}:reconstructed",
+            seed_id=seed_id,
             context=reconstructed_context,
             steps=plan.rejection_position + 1,
         )
@@ -687,7 +689,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
                     f"long-mixed:{seed_id}:context-steps={plan.context_steps}:k={plan.k}:"
                     f"position={plan.rejection_position}"
                 ),
-                seed_id=f"{seed_id}:reconstructed",
+                seed_id=seed_id,
                 context=reconstructed_context,
                 draft_tokens=mixed_draft,
                 target_tokens=continuation,
@@ -752,7 +754,7 @@ def build_target_fixtures(
     command_arguments: Sequence[str],
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
 ) -> ResultReceipt:
-    """Write suite-specific v2 fixtures, then an immutable raw receipt and report.
+    """Write suite-specific v3 fixtures, then an immutable raw receipt and report.
 
     The target observer runs before any bridge invocation.  Tests pass a local
     fake observer; the CLI always uses the strict M4 observer from the runner.
