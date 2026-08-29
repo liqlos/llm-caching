@@ -31,3 +31,24 @@ test runner stack; `.python-version` declares the minimum development runtime.
 All artifacts produced by later replay commands must identify their exact
 command, Git revision, input fingerprint, and evidence class. Hardware-specific
 results remain `NOT_RUN` until the target machine and backend gates are run.
+
+## Offline fixture receipt
+
+The following command runs only the model-free chronological replay, sealed
+temporary archive readback, and logical capacity simulator. It writes a
+`SIMULATOR` receipt; it does not invoke a model, live decode, target verifier,
+or timing measurement.
+
+```sh
+PCSS_REVISION="$(git rev-parse HEAD)"
+PYTHONPATH=src python3 -m pcss.offline_runner \
+  --fixture fixtures/replay/chronological-oracle-v1.json \
+  --rfc /Users/aleksei/Downloads/PCSS_MASTER_RFC_EN.md \
+  --output artifacts/offline/chronological-oracle.raw.json \
+  --report artifacts/offline/chronological-oracle.report.md \
+  --git-revision "$PCSS_REVISION" \
+  --exact-command 'PYTHONPATH=src python3 -m pcss.offline_runner --fixture fixtures/replay/chronological-oracle-v1.json --rfc /Users/aleksei/Downloads/PCSS_MASTER_RFC_EN.md --output artifacts/offline/chronological-oracle.raw.json --report artifacts/offline/chronological-oracle.report.md --git-revision <exact-git-revision> --exact-command <this-command>'
+```
+
+The source RFC stays outside this repository; obtain it at the user-supplied
+path and use the command with its absolute path when it is not copied locally.
