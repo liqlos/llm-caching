@@ -17,22 +17,49 @@ from .canonical import ContractError, canonical_json, require_string, sha256
 EvidenceClass = Literal["SIMULATOR", "LOCAL_MEASURED", "NOT_RUN", "OFFLINE_FIXTURE"]
 
 
-def resolve_git_revision(repository_root: Path) -> str:
-    """Read the actual full Git HEAD used by a reproducible result command."""
+def _runtime_repository_root() -> Path:
+    """Return the checkout that supplied this receipt implementation."""
 
+    return Path(__file__).resolve().parents[2]
+
+
+def _require_runtime_repository(repository_root: Path) -> Path:
+    resolved = repository_root.resolve()
+    if resolved != _runtime_repository_root():
+        raise ContractError(
+            "receipt repository_root must be the checkout that supplied the running pcss package"
+        )
+    return resolved
+
+
+def resolve_git_revision(repository_root: Path) -> str:
+    """Read full Git HEAD only from the clean checkout supplying this package."""
+
+    resolved = _require_runtime_repository(repository_root)
     try:
+        status = subprocess.run(
+            ("git", "status", "--porcelain=v1", "--untracked-files=all"),
+            cwd=resolved,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
         completed = subprocess.run(
             ("git", "rev-parse", "HEAD"),
-            cwd=repository_root,
+            cwd=resolved,
             capture_output=True,
             check=False,
             text=True,
         )
     except OSError as error:
         raise ContractError("git is required to create a reproducible PCSS receipt") from error
+    if status.returncode != 0:
+        raise ContractError(f"unable to inspect Git worktree for receipt: {resolved}")
+    if status.stdout:
+        raise ContractError("refuse receipt from a dirty or staged worktree")
     revision = completed.stdout.strip()
     if completed.returncode != 0 or len(revision) != 40:
-        raise ContractError(f"unable to resolve Git HEAD for receipt: {repository_root}")
+        raise ContractError(f"unable to resolve Git HEAD for receipt: {resolved}")
     return revision
 
 
@@ -42,7 +69,7 @@ def recorded_module_command(
     """Make a rerunnable Python-module command from the actual parsed argv."""
 
     module = require_string(module, "module")
-    source_path = repository_root.resolve() / "src"
+    source_path = _require_runtime_repository(repository_root) / "src"
     invocation = shlex.join((sys.executable, "-m", module, *command_arguments))
     return f"PYTHONPATH={shlex.quote(str(source_path))} {invocation}"
 

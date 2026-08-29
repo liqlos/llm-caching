@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from pcss.verifier import (
+    AdapterAvailability,
     ScriptedFixtureAdapter,
     UnavailableAdapter,
     VerifierCase,
@@ -79,3 +80,25 @@ def test_fixture_is_explicitly_offline_not_a_hardware_receipt() -> None:
     payload = json.loads(fixture.read_text())
     assert payload["evidence_class"] == "OFFLINE_FIXTURE"
     assert "not a target backend gate" in payload["purpose"]
+
+
+class SelfDeclaredTargetAdapter:
+    name = "self-declared-target"
+
+    def __init__(self) -> None:
+        self.verify_calls = 0
+
+    def availability(self) -> AdapterAvailability:
+        return AdapterAvailability("TARGET_BACKEND", "untrusted self-declaration")
+
+    def verify(self, case: VerifierCase):
+        self.verify_calls += 1
+        raise AssertionError("a target adapter needs a runner-minted permit")
+
+
+def test_target_adapter_cannot_run_through_harness_without_permit() -> None:
+    adapter = SelfDeclaredTargetAdapter()
+    receipt = VerifierHarness(adapter).k_sweep((case("unused", (1,), (1,), (1,)),))
+    assert receipt.status == "NOT_RUN"
+    assert receipt.execution_class == "NOT_RUN"
+    assert adapter.verify_calls == 0

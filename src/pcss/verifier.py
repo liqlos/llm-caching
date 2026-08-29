@@ -23,13 +23,121 @@ def _tokens(value: tuple[int, ...], field: str, *, allow_empty: bool = False) ->
         require_int(token, f"{field}[{index}]", minimum=0)
 
 
+def _sha256(value: str, field: str) -> str:
+    value = require_string(value, field)
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ContractError(f"{field} must be a lowercase SHA-256 hex digest")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class AdapterAvailability:
     execution_class: ExecutionClass
     reason: str
 
     def __post_init__(self) -> None:
+        if self.execution_class not in {"NOT_RUN", "OFFLINE_FIXTURE", "TARGET_BACKEND"}:
+            raise ContractError("availability.execution_class is invalid")
         require_string(self.reason, "availability.reason")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetHostIdentity:
+    """Runner-observed future target-host facts, never filled by baseline fixtures."""
+
+    schema_version: str
+    target_profile: str
+    operating_system: str
+    architecture: str
+    hardware_model: str
+    chip: str
+    memory_bytes: int
+    fingerprint: str
+
+    @classmethod
+    def from_observed(
+        cls,
+        *,
+        target_profile: str,
+        operating_system: str,
+        architecture: str,
+        hardware_model: str,
+        chip: str,
+        memory_bytes: int,
+    ) -> "TargetHostIdentity":
+        payload = {
+            "schema_version": "pcss.host-identity/v1",
+            "target_profile": target_profile,
+            "operating_system": operating_system,
+            "architecture": architecture,
+            "hardware_model": hardware_model,
+            "chip": chip,
+            "memory_bytes": memory_bytes,
+        }
+        return cls(**payload, fingerprint=sha256(payload))
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pcss.host-identity/v1":
+            raise ContractError("unsupported host identity schema")
+        for field in ("target_profile", "operating_system", "architecture", "hardware_model", "chip"):
+            require_string(getattr(self, field), f"host_identity.{field}")
+        require_int(self.memory_bytes, "host_identity.memory_bytes", minimum=1)
+        if self.fingerprint != sha256(
+            {
+                "schema_version": self.schema_version,
+                "target_profile": self.target_profile,
+                "operating_system": self.operating_system,
+                "architecture": self.architecture,
+                "hardware_model": self.hardware_model,
+                "chip": self.chip,
+                "memory_bytes": self.memory_bytes,
+            }
+        ):
+            raise ContractError("host identity fingerprint does not match its observed fields")
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "target_profile": self.target_profile,
+            "operating_system": self.operating_system,
+            "architecture": self.architecture,
+            "hardware_model": self.hardware_model,
+            "chip": self.chip,
+            "memory_bytes": self.memory_bytes,
+            "fingerprint": self.fingerprint,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TargetAdapterBinding:
+    """Paths and build identity for a future real backend; hashes are runner-computed."""
+
+    schema_version: str
+    adapter_source_path: str
+    backend_binary_path: str
+    model_artifact_path: str
+    llama_cpp_build_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != "pcss.verifier-adapter-binding/v1":
+            raise ContractError("unsupported target adapter binding schema")
+        for field in ("adapter_source_path", "backend_binary_path", "model_artifact_path"):
+            require_string(getattr(self, field), f"target_adapter_binding.{field}")
+        _sha256(self.llama_cpp_build_fingerprint, "target_adapter_binding.llama_cpp_build_fingerprint")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetExecutionPermit:
+    """Runner-minted authorization needed before a target adapter can verify cases."""
+
+    adapter_name: str
+    host_fingerprint: str
+    adapter_binding_fingerprint: str
+
+    def __post_init__(self) -> None:
+        require_string(self.adapter_name, "target_execution_permit.adapter_name")
+        _sha256(self.host_fingerprint, "target_execution_permit.host_fingerprint")
+        _sha256(self.adapter_binding_fingerprint, "target_execution_permit.adapter_binding_fingerprint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +187,12 @@ class VerifierAdapter(Protocol):
     def availability(self) -> AdapterAvailability: ...
 
     def verify(self, case: VerifierCase) -> AdapterOutcome: ...
+
+
+class TargetBoundVerifierAdapter(VerifierAdapter, Protocol):
+    """Additional contract required for a runner-authorized TARGET_BACKEND claim."""
+
+    def target_binding(self) -> TargetAdapterBinding: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,8 +284,9 @@ class ScriptedFixtureAdapter:
 class VerifierHarness:
     """Runs token/state fixtures without claiming target-runtime correctness."""
 
-    def __init__(self, adapter: VerifierAdapter) -> None:
+    def __init__(self, adapter: VerifierAdapter, *, target_execution_permit: TargetExecutionPermit | None = None) -> None:
         self.adapter = adapter
+        self.target_execution_permit = target_execution_permit
 
     def _run(self, suite: str, cases: tuple[VerifierCase, ...], metadata: dict[str, object] | None = None) -> HarnessReceipt:
         availability = self.adapter.availability()
@@ -182,6 +297,19 @@ class VerifierHarness:
                 status="NOT_RUN",
                 execution_class="NOT_RUN",
                 reason=availability.reason,
+                cases=(),
+                metadata=metadata or {},
+            )
+        if availability.execution_class == "TARGET_BACKEND" and (
+            self.target_execution_permit is None
+            or self.target_execution_permit.adapter_name != self.adapter.name
+        ):
+            return HarnessReceipt(
+                suite=suite,
+                adapter=self.adapter.name,
+                status="NOT_RUN",
+                execution_class="NOT_RUN",
+                reason="TARGET_BACKEND requires a runner-minted target execution permit",
                 cases=(),
                 metadata=metadata or {},
             )

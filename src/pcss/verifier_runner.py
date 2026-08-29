@@ -1,21 +1,25 @@
 """Fail-closed command boundary for a future target-backend verifier run.
 
-This module intentionally ships no Qwen/llama.cpp adapter.  A later adapter
-must be supplied as an importable factory and explicitly identify itself as a
-``TARGET_BACKEND`` before a correctness receipt can be labelled local measured
-evidence.  It produces no throughput or speedup metric.
+This module intentionally ships no Qwen/llama.cpp adapter. A future adapter
+cannot self-label a fixture as target evidence: the runner observes the host,
+hashes the adapter/backend/model files itself, compares those facts with an
+observed manifest, and mints the permit needed by ``VerifierHarness``.
+It produces no throughput or speedup metric.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import json
+import platform
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .canonical import ContractError
+from .canonical import ContractError, require_string, sha256
 from .manifest import validate_manifest
 from .results import (
     ResultReceipt,
@@ -26,7 +30,36 @@ from .results import (
     write_compact_report,
     write_raw_result,
 )
-from .verifier import AdapterAvailability, VerifierAdapter, VerifierCase, VerifierHarness
+from .verifier import (
+    AdapterAvailability,
+    HarnessReceipt,
+    TargetAdapterBinding,
+    TargetExecutionPermit,
+    TargetHostIdentity,
+    VerifierAdapter,
+    VerifierCase,
+    VerifierHarness,
+)
+
+
+TARGET_PROFILE = "macbook_pro_m4_24gb"
+_TARGET_MEMORY_BYTES = 24 * 1024**3
+_SUITES = frozenset({"k-sweep", "perfect-draft", "provider-floor", "forced-rejection", "long-mixed"})
+
+
+class _FrozenAvailabilityAdapter:
+    """Prevent an adapter from changing its execution class after authorization."""
+
+    def __init__(self, adapter: VerifierAdapter, availability: AdapterAvailability) -> None:
+        self._adapter = adapter
+        self._availability = availability
+        self.name = require_string(adapter.name, "adapter.name")
+
+    def availability(self) -> AdapterAvailability:
+        return self._availability
+
+    def verify(self, case: VerifierCase):
+        return self._adapter.verify(case)
 
 
 def _case(payload: Mapping[str, Any]) -> VerifierCase:
@@ -82,7 +115,16 @@ def _load_adapter(spec: str) -> VerifierAdapter:
     return adapter
 
 
+def _capture_availability(adapter: VerifierAdapter) -> AdapterAvailability:
+    availability = adapter.availability()
+    if not isinstance(availability, AdapterAvailability):
+        raise ContractError("adapter.availability() must return AdapterAvailability")
+    return availability
+
+
 def _require_observed_target_manifest(manifest: Mapping[str, Any]) -> None:
+    if manifest["evidence_class"] != "LOCAL_MEASURED":
+        raise ContractError("TARGET_BACKEND receipts require manifest.evidence_class=LOCAL_MEASURED")
     target = manifest["target"]
     if target["hardware"]["observation_status"] != "observed" or target["operating_system"]["observation_status"] != "observed":
         raise ContractError("TARGET_BACKEND receipts require observed hardware and OS manifest fields")
@@ -98,6 +140,132 @@ def _require_observed_target_manifest(manifest: Mapping[str, Any]) -> None:
     ):
         if manifest[field]["observation_status"] != "observed":
             raise ContractError(f"TARGET_BACKEND receipts require observed manifest.{field}")
+    if manifest["verifier_gate"]["observation_status"] != "observed":
+        raise ContractError("TARGET_BACKEND receipts require an observed verifier_gate")
+
+
+def _sysctl_value(name: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("sysctl", "-n", name),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise ContractError(f"unable to observe target host via sysctl {name}") from error
+    value = completed.stdout.strip()
+    if completed.returncode != 0 or not value:
+        raise ContractError(f"unable to observe target host via sysctl {name}")
+    return value
+
+
+def observe_target_host() -> TargetHostIdentity:
+    """Observe the future user-specified target only after TARGET_BACKEND is requested."""
+
+    memory_text = _sysctl_value("hw.memsize")
+    try:
+        memory_bytes = int(memory_text)
+    except ValueError as error:
+        raise ContractError("sysctl hw.memsize must be an integer") from error
+    identity = TargetHostIdentity.from_observed(
+        target_profile=TARGET_PROFILE,
+        operating_system=platform.system(),
+        architecture=platform.machine(),
+        hardware_model=_sysctl_value("hw.model"),
+        chip=_sysctl_value("machdep.cpu.brand_string"),
+        memory_bytes=memory_bytes,
+    )
+    if identity.operating_system != "Darwin":
+        raise ContractError("TARGET_BACKEND requires the target macOS host")
+    if identity.architecture != "arm64":
+        raise ContractError("TARGET_BACKEND requires an arm64 target host")
+    if not identity.hardware_model.startswith("MacBookPro"):
+        raise ContractError("TARGET_BACKEND requires the target MacBook Pro hardware class")
+    if not identity.chip.startswith("Apple M4"):
+        raise ContractError("TARGET_BACKEND requires an Apple M4-family chip")
+    if identity.memory_bytes != _TARGET_MEMORY_BYTES:
+        raise ContractError("TARGET_BACKEND requires the user-specified 24 GiB unified-memory target")
+    return identity
+
+
+def _adapter_source_path(adapter: VerifierAdapter, binding: TargetAdapterBinding) -> Path:
+    actual_source = inspect.getsourcefile(type(adapter))
+    if actual_source is None:
+        raise ContractError("target adapter must have an inspectable Python source file")
+    source_path = Path(actual_source).resolve()
+    declared_path = Path(binding.adapter_source_path).resolve()
+    if source_path != declared_path:
+        raise ContractError("target adapter source path differs from runner-inspected adapter source")
+    if not source_path.is_file():
+        raise ContractError("target adapter source path is not a regular file")
+    return source_path
+
+
+def _observed_binding(adapter: VerifierAdapter, binding: TargetAdapterBinding) -> dict[str, str]:
+    source_path = _adapter_source_path(adapter, binding)
+    backend_path = Path(binding.backend_binary_path).resolve()
+    model_path = Path(binding.model_artifact_path).resolve()
+    for label, path in (("backend binary", backend_path), ("model artifact", model_path)):
+        if not path.is_file():
+            raise ContractError(f"target {label} path is not a regular file")
+    return {
+        "schema_version": binding.schema_version,
+        "adapter_source_sha256": file_sha256(source_path),
+        "backend_binary_sha256": file_sha256(backend_path),
+        "model_artifact_sha256": file_sha256(model_path),
+        "llama_cpp_build_fingerprint": binding.llama_cpp_build_fingerprint,
+    }
+
+
+def _authorize_target_backend(
+    adapter: VerifierAdapter, manifest: Mapping[str, Any], host_identity: TargetHostIdentity
+) -> TargetExecutionPermit:
+    binding_method = getattr(adapter, "target_binding", None)
+    if not callable(binding_method):
+        raise ContractError("TARGET_BACKEND adapter must expose target_binding()")
+    binding = binding_method()
+    if not isinstance(binding, TargetAdapterBinding):
+        raise ContractError("target_binding() must return TargetAdapterBinding")
+
+    gate = manifest["verifier_gate"]
+    if gate["host_identity"] != host_identity.as_dict():
+        raise ContractError("runner-observed host identity differs from manifest.verifier_gate")
+    observed_binding = _observed_binding(adapter, binding)
+    if gate["adapter_binding"] != observed_binding:
+        raise ContractError("runner-computed adapter/backend/model binding differs from manifest.verifier_gate")
+    if manifest["model_artifact"]["sha256"] != observed_binding["model_artifact_sha256"]:
+        raise ContractError("runner-computed model hash differs from manifest.model_artifact.sha256")
+    if manifest["llama_cpp"]["fingerprint"] != observed_binding["llama_cpp_build_fingerprint"]:
+        raise ContractError("target adapter llama.cpp build fingerprint differs from manifest.llama_cpp")
+    return TargetExecutionPermit(
+        adapter_name=require_string(adapter.name, "adapter.name"),
+        host_fingerprint=host_identity.fingerprint,
+        adapter_binding_fingerprint=sha256(observed_binding),
+    )
+
+
+def _not_run_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
+    return HarnessReceipt(
+        suite=suite,
+        adapter=require_string(adapter.name, "adapter.name"),
+        status="NOT_RUN",
+        execution_class="NOT_RUN",
+        reason=reason,
+        cases=(),
+        metadata={"target_authorization": {"status": "rejected", "reason": reason}},
+    )
+
+
+def _run_suite(harness: VerifierHarness, suite: str, cases: tuple[VerifierCase, ...]) -> HarnessReceipt:
+    suites = {
+        "k-sweep": harness.k_sweep,
+        "perfect-draft": harness.perfect_draft,
+        "provider-floor": harness.provider_floor,
+        "forced-rejection": harness.forced_rejection_every_position,
+        "long-mixed": harness.long_mixed_trajectories,
+    }
+    return suites[suite](cases)
 
 
 def execute_suite(
@@ -109,45 +277,47 @@ def execute_suite(
     repository_root: Path,
     command_arguments: Sequence[str],
 ) -> ResultReceipt:
+    if suite not in _SUITES:
+        raise ContractError(f"unknown verifier suite: {suite}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     validate_manifest(manifest)
     cases = load_cases(fixture_path)
-    availability: AdapterAvailability = adapter.availability()
-    if availability.execution_class == "TARGET_BACKEND":
-        _require_observed_target_manifest(manifest)
+    availability = _capture_availability(adapter)
+    frozen_adapter = _FrozenAvailabilityAdapter(adapter, availability)
 
-    harness = VerifierHarness(adapter)
-    suites = {
-        "k-sweep": harness.k_sweep,
-        "perfect-draft": harness.perfect_draft,
-        "provider-floor": harness.provider_floor,
-        "forced-rejection": harness.forced_rejection_every_position,
-        "long-mixed": harness.long_mixed_trajectories,
-    }
-    try:
-        receipt = suites[suite](cases)
-    except KeyError as error:
-        raise ContractError(f"unknown verifier suite: {suite}") from error
+    if availability.execution_class == "TARGET_BACKEND":
+        try:
+            _require_observed_target_manifest(manifest)
+            permit = _authorize_target_backend(adapter, manifest, observe_target_host())
+        except Exception as error:
+            # Authorization errors must leave an auditable NOT_RUN receipt and never call verify().
+            harness_receipt = _not_run_receipt(suite, adapter, f"target authorization rejected: {error}")
+        else:
+            harness_receipt = _run_suite(
+                VerifierHarness(frozen_adapter, target_execution_permit=permit), suite, cases
+            )
+    else:
+        harness_receipt = _run_suite(VerifierHarness(frozen_adapter), suite, cases)
 
     evidence_class = {
         "TARGET_BACKEND": "LOCAL_MEASURED",
         "OFFLINE_FIXTURE": "OFFLINE_FIXTURE",
         "NOT_RUN": "NOT_RUN",
-    }[receipt.execution_class]
+    }[harness_receipt.execution_class]
     return make_receipt(
         evidence_class=evidence_class,
         command=recorded_module_command("pcss.verifier_runner", command_arguments, repository_root),
         git_revision=resolve_git_revision(repository_root),
         input_fingerprints={"fixture": file_sha256(fixture_path), "manifest": file_sha256(manifest_path)},
-        status=receipt.status,
-        payload=json.loads(receipt.as_json()),
+        status=harness_receipt.status,
+        payload=json.loads(harness_receipt.as_json()),
     )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one future PCSS verifier suite through an external adapter.")
     parser.add_argument("--adapter", required=True, help="external MODULE:CALLABLE factory returning a VerifierAdapter")
-    parser.add_argument("--suite", required=True, choices=("k-sweep", "perfect-draft", "provider-floor", "forced-rejection", "long-mixed"))
+    parser.add_argument("--suite", required=True, choices=tuple(sorted(_SUITES)))
     parser.add_argument("--fixture", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -166,7 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_raw_result(args.output, receipt)
     if args.report is not None:
         write_compact_report(args.report, raw_result=args.output, title=f"PCSS verifier {args.suite}")
-    return 0
+    return 0 if receipt.status in {"VERIFIED", "OFFLINE_FIXTURE"} else 1
 
 
 if __name__ == "__main__":

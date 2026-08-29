@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pcss.canonical import ContractError
-from pcss.results import make_receipt, write_compact_report, write_raw_result
+from pcss.results import make_receipt, recorded_module_command, write_compact_report, write_raw_result
 
 
 def receipt():
@@ -39,3 +39,8 @@ def test_raw_receipts_are_not_overwritten(tmp_path: Path) -> None:
     write_raw_result(raw, receipt())
     with pytest.raises(ContractError, match="already exists"):
         write_raw_result(raw, receipt())
+
+
+def test_receipt_command_cannot_bind_a_different_checkout(tmp_path: Path) -> None:
+    with pytest.raises(ContractError, match="supplied the running pcss package"):
+        recorded_module_command("pcss.offline_runner", (), tmp_path)
