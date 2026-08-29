@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from pcss.provider import (
     AlwaysMissProvider,
     Cursor,
@@ -91,3 +93,15 @@ def test_shadow_provider_fails_closed_on_incompatible_fingerprints() -> None:
     provider = DeterministicShadowProvider((incompatible,), clock_ns=clock)
     provider.begin_request(request)
     assert provider.propose("r1", tail_tokens=(1,), max_tokens=1, deadline_ns=150).reason == "incompatible_fingerprints"
+
+
+def test_provider_rejects_unknown_source_classes() -> None:
+    with pytest.raises(ValueError, match="unknown source class"):
+        RequestContext(
+            request_id="r",
+            fingerprints=Fingerprints("model", "tokenizer", "template", "protocol"),
+            scope=TrustedScope("principal", "app", None, None, "generation", None, None),
+            source_tiers=("not-a-tier",),  # type: ignore[arg-type]
+            deadline_ns=1,
+            probe_budget=1,
+        )

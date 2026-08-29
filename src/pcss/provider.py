@@ -23,6 +23,16 @@ SourceClass = Literal[
 ]
 ProposalStatus = Literal["proposal", "abstain"]
 FeedbackStatus = Literal["all_accepted", "rejected", "cancelled", "not_verified"]
+SOURCE_CLASSES = frozenset(
+    {
+        "current_context",
+        "current_source",
+        "same_session",
+        "same_repository",
+        "personal_persistent_history",
+        "imported_corpus",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +92,8 @@ class RequestContext:
             raise ContractError("source_tiers must not be empty")
         if len(set(self.source_tiers)) != len(self.source_tiers):
             raise ContractError("source_tiers must not contain duplicates")
+        if any(source not in SOURCE_CLASSES for source in self.source_tiers):
+            raise ContractError("source_tiers contains an unknown source class")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +134,10 @@ class Proposal:
         require_int(self.ambiguity, "proposal.ambiguity", minimum=0)
         require_int(self.ready_ns, "proposal.ready_ns", minimum=0)
         require_string(self.provenance_family, "proposal.provenance_family")
+        if self.source_class not in SOURCE_CLASSES:
+            raise ContractError("proposal.source_class is invalid")
+        if not self.shadow_only:
+            raise ContractError("live provider proposals are deferred until target gates pass")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +172,8 @@ class Feedback:
             require_int(token, f"feedback.committed_tokens[{index}]", minimum=0)
         if self.verification_latency_ns is not None:
             require_int(self.verification_latency_ns, "feedback.verification_latency_ns", minimum=0)
+        if self.source_attribution is not None and self.source_attribution not in SOURCE_CLASSES:
+            raise ContractError("feedback.source_attribution is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +334,21 @@ class ShadowCandidate:
     ambiguity: int = 0
     provenance_family: str = "fixture"
 
+    def __post_init__(self) -> None:
+        _ = Proposal(
+            proposal_id="validation",
+            request_id="validation",
+            tokens=self.tokens,
+            source_class=self.source_class,
+            scope=self.scope,
+            cursor=self.cursor,
+            matched_suffix_tokens=self.matched_suffix_tokens,
+            score=self.score,
+            ambiguity=self.ambiguity,
+            provenance_family=self.provenance_family,
+            ready_ns=0,
+        )
+
 
 class DeterministicShadowProvider(BaseProvider):
     """A deterministic lookup-plane fixture; proposals are telemetry-only."""
@@ -361,4 +394,3 @@ class DeterministicShadowProvider(BaseProvider):
                 ready_ns=now,
             )
         )
-
