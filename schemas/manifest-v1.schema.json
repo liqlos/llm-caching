@@ -4,7 +4,7 @@
   "title": "PCSS baseline evidence manifest v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "evidence_class", "target", "model_artifact", "quantization", "tokenizer", "chat_template", "generation_protocol", "llama_cpp", "context_kv", "benchmark"],
+  "required": ["schema_version", "run_id", "evidence_class", "target", "model_artifact", "quantization", "tokenizer", "chat_template", "generation_protocol", "llama_cpp", "context_kv", "benchmark", "verifier_gate"],
   "properties": {
     "schema_version": {"const": "pcss.manifest/v1"},
     "run_id": {"type": "string", "minLength": 1},
@@ -17,12 +17,17 @@
     "generation_protocol": {"$ref": "#/$defs/protocol"},
     "llama_cpp": {"$ref": "#/$defs/protocol"},
     "context_kv": {"$ref": "#/$defs/protocol"},
-    "benchmark": {"$ref": "#/$defs/protocol"}
+    "benchmark": {"$ref": "#/$defs/protocol"},
+    "verifier_gate": {"$ref": "#/$defs/verifier_gate"}
   },
   "$defs": {
     "target": {"type": "object", "additionalProperties": false, "required": ["hardware", "operating_system"], "properties": {"hardware": {"$ref": "#/$defs/observed_value"}, "operating_system": {"$ref": "#/$defs/observed_value"}}},
     "observed_value": {"type": "object", "additionalProperties": false, "required": ["observation_status", "value"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "value": {}}},
     "model": {"type": "object", "additionalProperties": false, "required": ["observation_status", "artifact_uri", "sha256"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "artifact_uri": {"type": ["string", "null"]}, "sha256": {"type": ["string", "null"]}}},
-    "protocol": {"type": "object", "additionalProperties": false, "required": ["observation_status", "fingerprint", "parameters"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "fingerprint": {"type": ["string", "null"]}, "parameters": {"type": ["object", "null"]}}}
+    "protocol": {"type": "object", "additionalProperties": false, "required": ["observation_status", "fingerprint", "parameters"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "fingerprint": {"type": ["string", "null"]}, "parameters": {"type": ["object", "null"]}}},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "host_identity": {"type": "object", "additionalProperties": false, "required": ["schema_version", "target_profile", "operating_system", "architecture", "hardware_model", "chip", "memory_bytes", "fingerprint"], "properties": {"schema_version": {"const": "pcss.host-identity/v1"}, "target_profile": {"type": "string", "minLength": 1}, "operating_system": {"type": "string", "minLength": 1}, "architecture": {"type": "string", "minLength": 1}, "hardware_model": {"type": "string", "minLength": 1}, "chip": {"type": "string", "minLength": 1}, "memory_bytes": {"type": "integer", "minimum": 1}, "fingerprint": {"$ref": "#/$defs/sha256"}}},
+    "adapter_binding": {"type": "object", "additionalProperties": false, "required": ["schema_version", "adapter_source_sha256", "backend_binary_sha256", "model_artifact_sha256", "llama_cpp_build_fingerprint"], "properties": {"schema_version": {"const": "pcss.verifier-adapter-binding/v1"}, "adapter_source_sha256": {"$ref": "#/$defs/sha256"}, "backend_binary_sha256": {"$ref": "#/$defs/sha256"}, "model_artifact_sha256": {"$ref": "#/$defs/sha256"}, "llama_cpp_build_fingerprint": {"$ref": "#/$defs/sha256"}}},
+    "verifier_gate": {"type": "object", "additionalProperties": false, "required": ["observation_status", "host_identity", "adapter_binding"], "properties": {"observation_status": {"enum": ["not_observed", "observed"]}, "host_identity": {"anyOf": [{"$ref": "#/$defs/host_identity"}, {"type": "null"}]}, "adapter_binding": {"anyOf": [{"$ref": "#/$defs/adapter_binding"}, {"type": "null"}]}}, "allOf": [{"if": {"properties": {"observation_status": {"const": "not_observed"}}}, "then": {"properties": {"host_identity": {"type": "null"}, "adapter_binding": {"type": "null"}}}}, {"if": {"properties": {"observation_status": {"const": "observed"}}}, "then": {"properties": {"host_identity": {"$ref": "#/$defs/host_identity"}, "adapter_binding": {"$ref": "#/$defs/adapter_binding"}}}}]}
   }
 }

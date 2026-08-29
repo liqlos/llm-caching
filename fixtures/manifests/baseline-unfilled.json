@@ -13,5 +13,6 @@
   "generation_protocol": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
   "llama_cpp": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
   "context_kv": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
-  "benchmark": {"observation_status": "not_observed", "fingerprint": null, "parameters": null}
+  "benchmark": {"observation_status": "not_observed", "fingerprint": null, "parameters": null},
+  "verifier_gate": {"observation_status": "not_observed", "host_identity": null, "adapter_binding": null}
 }
