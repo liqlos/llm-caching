@@ -14,6 +14,7 @@ from pcss.offline_runner import (
     main,
 )
 from pcss.results import file_sha256
+from pcss.replay import Candidate, ScopeIdentity, SourceTier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,3 +125,57 @@ def test_offline_fixture_accepts_fail_closed_normalized_jsonl(tmp_path: Path) ->
     records = offline_runner.load_trace_fixture(fixture)
 
     assert [record["record_id"] for record in records] == ["history-repo-a", "target-repo-b"]
+
+
+def test_capacity_ladder_admits_active_bundle_and_reports_policy_value(tmp_path: Path) -> None:
+    rfc = rfc_source(tmp_path)
+    receipt = execute_offline_fixture(
+        fixture_path=ROOT / "fixtures/replay/chronological-oracle-v1.json",
+        rfc_path=rfc,
+        repository_root=ROOT,
+        command_arguments=(),
+        expected_rfc_sha256=file_sha256(rfc),
+    )
+
+    capacity = receipt.payload["capacity_simulator"]
+    first = capacity["capacity_ladder_bytes"]["first"]
+    assert first >= 24
+    for simulation in capacity["simulations"].values():
+        manifests = simulation["runs"][-1]["manifests"]
+        assert manifests[-1]["main"]
+    summary = capacity["strategy_summary"]
+    assert set(summary) == set(capacity["simulations"])
+    assert all("active_capture_ratio" in point for points in summary.values() for point in points)
+    assert any(point["active_capture_ratio"] > 0 for points in summary.values() for point in points)
+
+
+def test_capacity_observation_rank_does_not_use_posthoc_acceptance() -> None:
+    scope = ScopeIdentity(None, None, "repo", None, None, None, None, None, None)
+    shorter_better_acceptance = Candidate(
+        tier=SourceTier.SAME_REPOSITORY,
+        source_record_id="a",
+        source_cursor=0,
+        matched_suffix_length=4,
+        continuation=(1,),
+        accepted_prefix_length=99,
+        source_token_bytes=4,
+        source_scope=scope,
+        provenance_family="test",
+        source_class="visible_code",
+    )
+    longer_worse_acceptance = Candidate(
+        tier=SourceTier.SAME_REPOSITORY,
+        source_record_id="b",
+        source_cursor=0,
+        matched_suffix_length=5,
+        continuation=(2,),
+        accepted_prefix_length=0,
+        source_token_bytes=4,
+        source_scope=scope,
+        provenance_family="test",
+        source_class="visible_code",
+    )
+
+    assert offline_runner._persistent_candidate_rank(longer_worse_acceptance) < offline_runner._persistent_candidate_rank(
+        shorter_better_acceptance
+    )

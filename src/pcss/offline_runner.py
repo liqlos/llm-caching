@@ -38,7 +38,7 @@ from .metrics import (
     source_attribution,
     viable_opportunity_recovery_rate,
 )
-from .replay import ReplayResult, replay_chronologically
+from .replay import Candidate, ReplayResult, SourceTier, replay_chronologically
 from .results import (
     ResultReceipt,
     file_sha256,
@@ -168,33 +168,39 @@ def _capacity_simulation(result: ReplayResult, common_archive_bytes: int) -> dic
                 "imported_corpus",
             }
         )
-        selected = min(
-            persistent,
-            key=lambda candidate: (
-                -candidate.accepted_prefix_length,
-                -candidate.matched_suffix_length,
-                candidate.source_record_id,
-                candidate.source_cursor,
-                candidate.tier.value,
-            ),
-            default=None,
-        )
+        # Membership observations must be selected with pre-target information.
+        # ``accepted_prefix_length`` is retained strictly as later reward, never
+        # as an admission/ranking feature.
+        selected = min(persistent, key=_persistent_candidate_rank, default=None)
         source_record_id = selected.source_record_id if selected is not None else item.record_id
+        cheaper_prefix = max(item.context_prefix, item.current_source_prefix)
         observations.append(
             CapacityObservation(
                 observation_id=f"{item.record_id}:{item.position}",
                 epoch=epoch,
                 ordinal=ordinal,
                 bundle_id=source_record_id,
-                unique_value=item.persistent_unique_prefix if selected is not None else 0,
+                unique_value=(
+                    max(0, selected.accepted_prefix_length - cheaper_prefix)
+                    if selected is not None
+                    else 0
+                ),
             )
         )
     simulator = CapacitySimulator(bundles, common_archive_bytes=common_archive_bytes)
+    # The first ladder point can admit the smallest active bundle in main:
+    # main has half of each logical view.  The final point can admit every
+    # bundle, while retaining the fixed main/frontier/ghost partition.
+    first_capacity_bytes = 2 * min(bundle.active_bytes for bundle in bundles)
+    full_active_view_bytes = (4 * sum(bundle.active_bytes for bundle in bundles) + 2) // 3
+    max_capacity_bytes = first_capacity_bytes
+    while max_capacity_bytes < full_active_view_bytes:
+        max_capacity_bytes *= 2
     simulations = {
         policy.value: simulator.run_geometric(
             observations,
-            first_capacity_bytes=64,
-            max_capacity_bytes=256,
+            first_capacity_bytes=first_capacity_bytes,
+            max_capacity_bytes=max_capacity_bytes,
             policy=policy,
         ).as_dict()
         for policy in (CapacityPolicy.HISTORICAL_VALUE_DENSITY, CapacityPolicy.RECENCY_WINDOW_CONTROL)
@@ -202,8 +208,62 @@ def _capacity_simulation(result: ReplayResult, common_archive_bytes: int) -> dic
     return {
         "kind": "offline_causal_capacity_simulator_no_runtime_timing",
         "fixed_stream_observation_count": len(observations),
+        "capacity_ladder_bytes": {
+            "first": first_capacity_bytes,
+            "maximum": max_capacity_bytes,
+            "selection_rule": "first admits the smallest bundle in main; maximum is a geometric point that admits every bundle across main+frontier",
+        },
         "simulations": simulations,
+        "strategy_summary": _capacity_strategy_summary(simulations),
     }
+
+
+def _persistent_candidate_rank(candidate: Candidate) -> tuple[int, int, int, str, int]:
+    """Stable pre-target rank shared by capacity-observation extraction only."""
+
+    tier_rank = {
+        SourceTier.SAME_SESSION: 0,
+        SourceTier.SAME_REPOSITORY: 1,
+        SourceTier.PERSONAL_PERSISTENT_HISTORY: 2,
+        SourceTier.IMPORTED_CORPUS: 3,
+    }
+    return (
+        -candidate.matched_suffix_length,
+        tier_rank[candidate.tier],
+        candidate.source_token_bytes,
+        candidate.source_record_id,
+        candidate.source_cursor,
+    )
+
+
+def _capacity_strategy_summary(simulations: Mapping[str, Mapping[str, Any]]) -> dict[str, list[dict[str, int | float]]]:
+    """Compact value accounting for logical policies, without a runtime claim."""
+
+    summary: dict[str, list[dict[str, int | float]]] = {}
+    for policy, simulation in sorted(simulations.items()):
+        points: list[dict[str, int | float]] = []
+        for run in simulation["runs"]:
+            totals = {
+                field: sum(outcome[field] for outcome in run["outcomes"])
+                for field in (
+                    "main_unique_value",
+                    "frontier_unique_value",
+                    "ghost_unique_value",
+                    "inactive_unique_value",
+                )
+            }
+            total = sum(totals.values())
+            active = totals["main_unique_value"] + totals["frontier_unique_value"]
+            points.append(
+                {
+                    "capacity_bytes": run["capacity_bytes"],
+                    **totals,
+                    "total_unique_value": total,
+                    "active_capture_ratio": active / total if total else 0.0,
+                }
+            )
+        summary[policy] = points
+    return summary
 
 
 def _payload(result: ReplayResult) -> dict[str, Any]:
