@@ -33,3 +33,20 @@ def test_archive_candidate_binds_exact_prompt_and_source_provenance(tmp_path: Pa
     other["record_id"] = "other-source"
     with pytest.raises(ContractError, match="abstained"):
         _candidate_from_archive(archive, other, target, output_tokens=2)
+
+
+def test_archive_candidate_reports_an_abstention_as_an_empty_live_fallback(tmp_path: Path) -> None:
+    source = json.loads((ROOT / "fixtures/replay/chronological-oracle-v1.json").read_text(encoding="utf-8"))[0]
+    source["content"]["prompt_token_ids"] = [90, 91, 92, 93]
+    source, target = derive_exact_repeat_records([source])
+    archive = build_exact_prompt_archive(tmp_path / "archive", [source])
+    target = json.loads(json.dumps(target))
+    target["content"]["prompt_token_ids"][-1] += 1
+
+    candidate, _, provider, request, proposal = _candidate_from_archive(
+        archive, source, target, output_tokens=2, require_hit=False
+    )
+
+    assert candidate == ()
+    assert proposal is None
+    provider.end_request(request.request_id)

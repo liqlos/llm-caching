@@ -111,8 +111,8 @@ def _request(
         raise ContractError("benchmark prompt token stream must not be empty")
     if k < 1 or k + 1 > config.runtime["n_batch"]:
         raise ContractError("benchmark k exceeds the pending-token batch boundary")
-    if output_tokens < 2 or output_tokens > len(candidate):
-        raise ContractError("benchmark output_tokens must be between two and the candidate length")
+    if output_tokens < 2 or (candidate and output_tokens > len(candidate)):
+        raise ContractError("benchmark output_tokens must be between two and the non-empty candidate length")
     if warmup_repetitions < 0 or measurement_repetitions < 2:
         raise ContractError("benchmark requires non-negative warmups and at least two measurements")
     if reanchor_min_tokens < 0 or reanchor_min_tokens > output_tokens:

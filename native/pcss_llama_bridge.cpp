@@ -2506,7 +2506,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     if (prefix_size + output_count > config.runtime.n_ctx) {
         throw BridgeError("invalid_request", "pending benchmark output exceeds configured n_ctx");
     }
-    if (candidate_tokens.size() < output_count) {
+    if (!candidate_tokens.empty() && candidate_tokens.size() < output_count) {
         throw BridgeError("invalid_request", "pending benchmark candidate is shorter than requested output");
     }
 
@@ -2738,7 +2738,9 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     result["reanchor_min_tokens"] = Json(static_cast<std::int64_t>(reanchor_min_tokens));
     result["authoritative_tokens"] = token_array(authoritative_tokens);
     result["candidate_prefix_tokens"] = token_array(
-        std::vector<llama_token>(candidate_tokens.begin(), candidate_tokens.begin() + output_count)
+        candidate_tokens.empty()
+            ? std::vector<llama_token>{}
+            : std::vector<llama_token>(candidate_tokens.begin(), candidate_tokens.begin() + output_count)
     );
     result["final_state_sha256"] = Json(sha256_hex(authoritative_state));
     result["final_state_bytes"] = Json(static_cast<std::int64_t>(authoritative_state.size()));

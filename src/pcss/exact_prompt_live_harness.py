@@ -64,7 +64,8 @@ def _candidate_from_archive(
     target: Mapping[str, Any],
     *,
     output_tokens: int,
-) -> tuple[tuple[int, ...], int, ExactPromptArchiveShadowProvider, RequestContext, Proposal]:
+    require_hit: bool = True,
+) -> tuple[tuple[int, ...], int, ExactPromptArchiveShadowProvider, RequestContext, Proposal | None]:
     prompt = tuple(target["content"]["prompt_token_ids"])
     fingerprints = _fingerprints(target)
     scope = _scope(target, widening_level=1)
@@ -84,7 +85,9 @@ def _candidate_from_archive(
     proposal = provider.propose(request.request_id, tail_tokens=prompt, max_tokens=output_tokens, deadline_ns=request.deadline_ns)
     elapsed = perf_counter_ns() - started
     if not isinstance(proposal, Proposal):
-        raise ContractError("exact-prompt archive provider abstained during a required exact hit")
+        if require_hit:
+            raise ContractError("exact-prompt archive provider abstained during a required exact hit")
+        return (), elapsed, provider, request, None
     candidate = proposal.tokens
     if len(candidate) != output_tokens:
         raise ContractError("exact-prompt archive cursor is shorter than the requested output")
@@ -102,6 +105,7 @@ def run_exact_prompt_live_harness(
     report_path: Path,
     repository_root: Path,
     command_arguments: Sequence[str],
+    miss_pairs: Sequence[str] = (),
     k: int = 2,
     output_tokens: int = 48,
     warmup_repetitions: int = 2,
@@ -109,8 +113,8 @@ def run_exact_prompt_live_harness(
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
-    if not pairs or len(set(pairs)) != len(pairs):
-        raise ContractError("exact-prompt live harness requires unique pairs")
+    if not pairs or len(set(pairs) | set(miss_pairs)) != len(pairs) + len(miss_pairs):
+        raise ContractError("exact-prompt live harness requires unique hit and miss pairs")
     if warmup_repetitions < 0 or measurement_repetitions < 2:
         raise ContractError("exact-prompt live harness requires non-negative warmups and two measurements")
     config = load_bridge_config(config_path)
@@ -131,18 +135,18 @@ def run_exact_prompt_live_harness(
     cases: list[dict[str, Any]] = []
     ratios_by_request: dict[str, list[float]] = {}
     request_fingerprints: dict[str, str] = {}
-    for pair_spec in pairs:
-        source, target = _pair(records, pair_spec, pair_mode="exact_repeat")
+    work_items = tuple((pair, True) for pair in pairs) + tuple((pair, False) for pair in miss_pairs)
+    for pair_spec, require_hit in work_items:
+        source, target = _pair(records, pair_spec, pair_mode="exact_repeat" if require_hit else "source_reuse")
         for _ in range(warmup_repetitions):
             _, _, provider, provider_request, proposal = _candidate_from_archive(
-                archive, source, target, output_tokens=output_tokens
+                archive, source, target, output_tokens=output_tokens, require_hit=require_hit
             )
-            provider.feedback(
-                provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None)
-            )
+            if proposal is not None:
+                provider.feedback(provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
             provider.end_request(provider_request.request_id)
         candidates_and_times = [
-            _candidate_from_archive(archive, source, target, output_tokens=output_tokens)
+            _candidate_from_archive(archive, source, target, output_tokens=output_tokens, require_hit=require_hit)
             for _ in range(measurement_repetitions)
         ]
         candidate = candidates_and_times[0][0]
@@ -171,9 +175,8 @@ def run_exact_prompt_live_harness(
             })
         provider_telemetry: list[dict[str, Any]] = []
         for _, _, provider, provider_request, proposal in candidates_and_times:
-            provider.feedback(
-                provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None)
-            )
+            if proposal is not None:
+                provider.feedback(provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
             provider.end_request(provider_request.request_id)
             provider_telemetry.extend(
                 {"event": event.event, "request_id": event.request_id, "at_ns": event.at_ns, **event.payload}
@@ -210,7 +213,7 @@ def run_exact_prompt_live_harness(
             "kind": "sealed_exact_prompt_archive_to_isolated_bridge_harness",
             "host_identity": host.as_dict(), "analysis": analysis, "cases": cases,
             "archive_byte_accounting": archive.archive.byte_accounting(),
-            "runtime_claim": "external sealed archive lookup plus isolated bridge decode harness; no llama.cpp provider hook or production decode integration",
+            "runtime_claim": "external sealed archive provider plus live bridge decode; hit and abstention lookup costs are inside the candidate clock, but this remains an isolated bridge harness rather than a llama.cpp provider hook",
             "not_claimed": ["end_to_end_request_speedup", "representative_workload_speedup", "thermal_sustainability", "online_storage"],
         },
     )
@@ -226,6 +229,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--archive-root", type=Path, required=True)
     parser.add_argument("--pair", action="append", required=True)
+    parser.add_argument("--miss-pair", action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
@@ -241,7 +245,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parsed = _parser().parse_args(arguments)
     run_exact_prompt_live_harness(
         config_path=parsed.config, manifest_path=parsed.manifest, trace_path=parsed.trace,
-        archive_root=parsed.archive_root, pairs=parsed.pair, output_path=parsed.output,
+        archive_root=parsed.archive_root, pairs=parsed.pair, miss_pairs=parsed.miss_pair, output_path=parsed.output,
         report_path=parsed.report, repository_root=parsed.repository_root, command_arguments=arguments,
         k=parsed.k, output_tokens=parsed.output_tokens, warmup_repetitions=parsed.warmup_repetitions,
         measurement_repetitions=parsed.measurement_repetitions,
