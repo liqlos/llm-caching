@@ -77,3 +77,44 @@ def test_exact_prompt_admission_selects_only_full_prompt_repeats(
     assert receipt.payload["analysis"]["exact_prompt_only"] is True
     assert receipt.payload["analysis"]["proposed_positions"] == len(target["content"]["committed_token_ids"])
     assert receipt.payload["analysis"]["abstentions"] >= 2 * len(target["content"]["committed_token_ids"])
+
+
+def test_exact_prompt_admission_abstains_on_divergent_historical_continuations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = json.loads((ROOT / "fixtures/replay/chronological-oracle-v1.json").read_text(encoding="utf-8"))[0]
+    source = json.loads(json.dumps(source))
+    source["content"]["prompt_token_ids"] = [90, 91, 92, 93]
+    source, target = derive_exact_repeat_records([source])
+    conflict = json.loads(json.dumps(source))
+    conflict["record_id"] = "conflicting-history"
+    conflict["request_id"] = "conflicting-request"
+    conflict["session_id"] = "conflicting-session"
+    conflict["chronological_index"] = 2
+    conflict["timestamp_ns"] = target["timestamp_ns"] - 1
+    conflict["content"]["committed_token_ids"] = [
+        token + 1 for token in conflict["content"]["committed_token_ids"]
+    ]
+    target["chronological_index"] = 3
+    target["timestamp_ns"] += 1_000_000_000
+    trace = tmp_path / "trace.jsonl"
+    trace.write_text("".join(json.dumps(record) + "\n" for record in (source, conflict, target)), encoding="utf-8")
+    monkeypatch.setattr("pcss.shadow_runner.resolve_git_revision", lambda root: "a" * 40)
+    monkeypatch.setattr(
+        "pcss.shadow_runner.recorded_module_command",
+        lambda module, arguments, root: "PYTHONPATH=/fixture python -m pcss.shadow_runner",
+    )
+
+    receipt = run_shadow(
+        trace_path=trace,
+        output_path=tmp_path / "raw.json",
+        report_path=tmp_path / "report.md",
+        repository_root=ROOT,
+        command_arguments=(),
+        min_suffix=1,
+        k=2,
+        exact_prompt_only=True,
+    )
+
+    target_events = [event for event in receipt.payload["telemetry"] if event["request_id"] == target["request_id"]]
+    assert not any(event["event"] == "proposal" for event in target_events)

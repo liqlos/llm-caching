@@ -174,6 +174,8 @@ def run_shadow(
                     position=opportunity.position,
                     k=k,
                 )
+                if len({candidate.continuation for candidate in persistent}) > 1:
+                    persistent = []
             else:
                 persistent = [candidate for candidate in opportunity.candidates if candidate.tier in _PERSISTENT_TIERS]
             if persistent:
