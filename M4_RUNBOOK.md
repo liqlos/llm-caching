@@ -132,6 +132,24 @@ production decode integration or a general PCSS speedup claim.
   zero unique credit after the stronger source tier. This is an oracle protocol
   comparison, not online patch generation or speedup. Raw SHA-256:
   `75e7bb0215b023d4cf0d3cb33f5e0fd82a503f0da2a4dcf7ff4061026d3bf08b`.
+- The distinct causal capacity-policy replay at revision
+  `e7806196d0cc8e6cfcc02cac57a391b01dd273fd` is `SIMULATOR VERIFIED_OFFLINE`.
+  It evaluates one six-record Qwen3-8B trace stream (288 chronological
+  observations, no future-token retrieval) over the same immutable archive.
+  At 384 logical bytes, historical value-density captured 993/1682 (59.04%)
+  oracle-valued unique persistent tokens in its active view, versus 1/1682
+  (0.06%) for the single fixed one-epoch recency control. At 1536 bytes,
+  value-density captured 1682/1682 while that control remained at 993/1682.
+  Inputs, raw receipt, and compact report are sealed under
+  `/Users/ai-server/Projects/pcss-artifacts/runs/capacity-policy-e780619-20260830`
+  (raw SHA-256 `455daeb6a5b6649a2a80a64366bd8bc09e1972d1c4a73887f12cfca55af91609`).
+  The distinct six-record source-edit trace family reproduced the ordering:
+  at 384 bytes, value-density captured 288/329 (87.54%) versus 1/329 (0.30%);
+  at 1536 bytes it captured 329/329 versus 292/329 (88.75%). Its sealed root is
+  `/Users/ai-server/Projects/pcss-artifacts/runs/capacity-policy-source-edit-e780619-20260830`
+  and raw SHA-256 is `daa83b22201f8c2d5f40f13a90943d86df7004e38c3fc28af13cb60832eaae73`.
+  This selects neither a production eviction policy nor a runtime capacity; it
+  is a causal offline cache-membership result only.
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
