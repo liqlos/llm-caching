@@ -42,6 +42,7 @@ constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/
 constexpr const char * kPendingTrajectorySchema = "pcss.llama-bridge-pending-trajectory/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
+constexpr const char * kPendingBenchmarkSchema = "pcss.llama-bridge-pending-benchmark/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -1311,6 +1312,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("verify"),
         Json("verify_pending"),
         Json("trajectory_pending"),
+        Json("benchmark_pending"),
         Json("profile"),
         Json("profile_pending"),
     });
@@ -2376,6 +2378,227 @@ HandledResponse profile_pending(const Json::Object & request) {
     return {Json(std::move(result)), true};
 }
 
+HandledResponse benchmark_pending(const Json::Object & request) {
+    require_exact_keys(
+        request,
+        {
+            "schema_version",
+            "operation",
+            "model_artifact",
+            "llama_cpp_library",
+            "llama_cpp_revision",
+            "runtime",
+            "seed",
+            "benchmark",
+        }
+    );
+    require_request_schema(request, "benchmark_pending");
+    const RequestConfig config = parse_config(request);
+    const SeedSpec seed = parse_seed(request, false);
+    const Json::Object & benchmark = as_object(required_field(request, "benchmark"), "benchmark");
+    require_exact_keys(
+        benchmark,
+        {"case_id", "candidate_tokens", "k", "output_tokens", "warmup_repetitions", "measurement_repetitions"}
+    );
+    const std::string case_id = required_string(benchmark, "case_id");
+    const std::vector<llama_token> candidate_tokens = required_tokens(benchmark, "candidate_tokens");
+    const std::size_t k = static_cast<std::size_t>(required_u32(benchmark, "k", 1U));
+    const std::size_t output_count = static_cast<std::size_t>(required_u32(benchmark, "output_tokens", 2U));
+    const std::size_t warmup_repetitions = static_cast<std::size_t>(
+        required_u32(benchmark, "warmup_repetitions", 1U)
+    );
+    const std::size_t measurement_repetitions = static_cast<std::size_t>(
+        required_u32(benchmark, "measurement_repetitions", 2U)
+    );
+    if (k + 1U > config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "pending benchmark batch exceeds configured n_batch");
+    }
+    const std::size_t prefix_size = seed.initial_context_tokens.size() - 1U;
+    if (prefix_size + output_count > config.runtime.n_ctx) {
+        throw BridgeError("invalid_request", "pending benchmark output exceeds configured n_ctx");
+    }
+    if (candidate_tokens.size() < output_count) {
+        throw BridgeError("invalid_request", "pending benchmark candidate is shorter than requested output");
+    }
+
+    ModelRuntime runtime(config);
+    runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
+    runtime.validate_tokens(candidate_tokens, "benchmark.candidate_tokens");
+    const llama_token anchor_token = seed.initial_context_tokens.back();
+    const std::vector<llama_token> prefix_tokens(
+        seed.initial_context_tokens.begin(),
+        seed.initial_context_tokens.end() - 1
+    );
+    Context prompt = runtime.make_context();
+    if (!prefix_tokens.empty()) {
+        decode_tokens(prompt, prefix_tokens, 0U, false);
+    }
+    const std::vector<std::uint8_t> prompt_state = snapshot_state(prompt);
+
+    struct DecodeRun {
+        std::vector<llama_token> emitted;
+        std::vector<std::uint8_t> state;
+        std::int64_t decode_ns = 0;
+        std::size_t proposed = 0U;
+        std::size_t accepted = 0U;
+        std::size_t verification_rounds = 0U;
+        std::size_t serial_fallback_steps = 0U;
+    };
+    auto run_serial = [&](Context & context) {
+        DecodeRun run;
+        run.emitted.reserve(output_count);
+        llama_token pending = anchor_token;
+        run.decode_ns = measured_nanoseconds([&]() {
+            for (std::size_t index = 0; index < output_count; ++index) {
+                decode_tokens(context, std::vector<llama_token>{pending}, prefix_size + index, true);
+                pending = greedy_argmax(context, runtime.vocabulary_size());
+                run.emitted.push_back(pending);
+            }
+        });
+        run.state = snapshot_state(context);
+        return run;
+    };
+    auto run_candidate = [&](Context & context) {
+        DecodeRun run;
+        run.emitted.reserve(output_count);
+        llama_token pending = anchor_token;
+        std::size_t committed_size = prefix_size;
+        bool candidate_enabled = true;
+        run.decode_ns = measured_nanoseconds([&]() {
+            while (run.emitted.size() < output_count) {
+                const std::size_t remaining = output_count - run.emitted.size();
+                const std::size_t candidate_remaining = candidate_tokens.size() - run.emitted.size();
+                const std::size_t draft_count = candidate_enabled && remaining > 1U
+                    ? std::min({k, remaining - 1U, candidate_remaining})
+                    : 0U;
+                if (draft_count == 0U) {
+                    decode_tokens(context, std::vector<llama_token>{pending}, committed_size, true);
+                    pending = greedy_argmax(context, runtime.vocabulary_size());
+                    run.emitted.push_back(pending);
+                    ++committed_size;
+                    ++run.serial_fallback_steps;
+                    continue;
+                }
+                std::vector<llama_token> batch;
+                batch.reserve(draft_count + 1U);
+                batch.push_back(pending);
+                batch.insert(
+                    batch.end(),
+                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(run.emitted.size()),
+                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(run.emitted.size() + draft_count)
+                );
+                decode_one_batch_with_all_logits(context, batch, committed_size);
+                std::vector<llama_token> targets;
+                targets.reserve(batch.size());
+                for (std::size_t index = 0; index < batch.size(); ++index) {
+                    targets.push_back(
+                        greedy_argmax_at(context, runtime.vocabulary_size(), static_cast<std::int32_t>(index))
+                    );
+                }
+                std::size_t accepted = 0U;
+                while (accepted < draft_count && batch[accepted + 1U] == targets[accepted]) {
+                    ++accepted;
+                }
+                run.proposed += draft_count;
+                run.accepted += accepted;
+                ++run.verification_rounds;
+                llama_synchronize(context.raw());
+                const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
+                if (!llama_memory_seq_rm(llama_get_memory(context.raw()), 0, trim_from, -1)) {
+                    throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a live benchmark tail");
+                }
+                for (std::size_t index = 0; index < accepted; ++index) {
+                    run.emitted.push_back(batch[index + 1U]);
+                }
+                committed_size += 1U + accepted;
+                if (accepted < draft_count) {
+                    pending = targets[accepted];
+                    run.emitted.push_back(pending);
+                    candidate_enabled = false;
+                } else {
+                    pending = targets[draft_count];
+                    run.emitted.push_back(pending);
+                }
+            }
+        });
+        run.state = snapshot_state(context);
+        return run;
+    };
+    auto require_equal = [&](const DecodeRun & serial, const DecodeRun & candidate, const char * phase) {
+        if (serial.emitted != candidate.emitted) {
+            throw BridgeError("live_output_mismatch", std::string(phase) + " output differs from serial greedy");
+        }
+        if (serial.state != candidate.state) {
+            throw BridgeError("live_state_mismatch", std::string(phase) + " state differs from serial greedy");
+        }
+    };
+
+    Context serial_before = runtime.make_context();
+    Context candidate = runtime.make_context();
+    Context serial_after = runtime.make_context();
+    for (std::size_t index = 0; index < warmup_repetitions; ++index) {
+        restore_state(serial_before, prompt_state);
+        restore_state(candidate, prompt_state);
+        const DecodeRun serial = run_serial(serial_before);
+        const DecodeRun speculative = run_candidate(candidate);
+        require_equal(serial, speculative, "warmup");
+    }
+    Json::Array measurements;
+    measurements.reserve(measurement_repetitions);
+    std::vector<llama_token> authoritative_tokens;
+    std::vector<std::uint8_t> authoritative_state;
+    for (std::size_t index = 0; index < measurement_repetitions; ++index) {
+        restore_state(serial_before, prompt_state);
+        restore_state(candidate, prompt_state);
+        restore_state(serial_after, prompt_state);
+        const DecodeRun before = run_serial(serial_before);
+        const DecodeRun speculative = run_candidate(candidate);
+        const DecodeRun after = run_serial(serial_after);
+        require_equal(before, speculative, "measurement");
+        require_equal(after, speculative, "measurement repeat");
+        if (before.emitted != after.emitted || before.state != after.state) {
+            throw BridgeError("baseline_repeat_mismatch", "paired serial live benchmark baselines differ");
+        }
+        authoritative_tokens = before.emitted;
+        authoritative_state = before.state;
+        Json::Object row;
+        row["iteration"] = Json(static_cast<std::int64_t>(index));
+        row["serial_before_ns"] = Json(before.decode_ns);
+        row["candidate_decode_ns"] = Json(speculative.decode_ns);
+        row["serial_after_ns"] = Json(after.decode_ns);
+        row["proposed_tokens"] = Json(static_cast<std::int64_t>(speculative.proposed));
+        row["accepted_tokens"] = Json(static_cast<std::int64_t>(speculative.accepted));
+        row["verification_rounds"] = Json(static_cast<std::int64_t>(speculative.verification_rounds));
+        row["serial_fallback_steps"] = Json(static_cast<std::int64_t>(speculative.serial_fallback_steps));
+        measurements.emplace_back(Json(std::move(row)));
+    }
+
+    Json::Object result = result_base(kPendingBenchmarkSchema, "benchmark_pending", "ok");
+    result["case_id"] = Json(case_id);
+    result["seed_id"] = Json(seed.seed_id);
+    result["k"] = Json(static_cast<std::int64_t>(k));
+    result["output_tokens"] = Json(static_cast<std::int64_t>(output_count));
+    result["warmup_repetitions"] = Json(static_cast<std::int64_t>(warmup_repetitions));
+    result["measurement_repetitions"] = Json(static_cast<std::int64_t>(measurement_repetitions));
+    result["authoritative_tokens"] = token_array(authoritative_tokens);
+    result["candidate_prefix_tokens"] = token_array(
+        std::vector<llama_token>(candidate_tokens.begin(), candidate_tokens.begin() + output_count)
+    );
+    result["final_state_sha256"] = Json(sha256_hex(authoritative_state));
+    result["final_state_bytes"] = Json(static_cast<std::int64_t>(authoritative_state.size()));
+    result["measurements"] = Json(std::move(measurements));
+    result["measurement_clock"] = Json("std::chrono::steady_clock/nanoseconds/v1");
+    result["measurement_scope"] = Json("decode-and-synchronize/prefill-restore-provider-excluded/v1");
+    result["provider_integration"] = Json("static-trace-candidate/provider-lookup-excluded/v1");
+    result["exact_output_and_state"] = Json(true);
+    result["configuration"] = runtime_echo(config);
+    result["observed_context"] = observed_context(candidate);
+    result["state_export"] = Json(kStateExport);
+    result["state_api"] = Json(kStateApi);
+    result["claim_boundary"] = Json("controlled-static-candidate-live-decode/not-general-pcss/v1");
+    return {Json(std::move(result)), true};
+}
+
 HandledResponse handle_request(const Json & request, const char * expected_operation) {
     const Json::Object & object = as_object(request, "request");
     const std::string operation = required_string(object, "operation");
@@ -2406,6 +2629,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     if (operation == "profile_pending") {
         return profile_pending(object);
     }
+    if (operation == "benchmark_pending") {
+        return benchmark_pending(object);
+    }
     throw BridgeError("invalid_request", "unsupported bridge operation");
 }
 
@@ -2431,7 +2657,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, or --pcss-profile-pending"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, or --pcss-benchmark-pending"
         );
     }
     const std::string argument(argv[1]);
@@ -2459,9 +2685,12 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-profile-pending") {
         return "profile_pending";
     }
+    if (argument == "--pcss-benchmark-pending") {
+        return "benchmark_pending";
+    }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, or --pcss-profile-pending"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, or --pcss-benchmark-pending"
     );
 }
 
