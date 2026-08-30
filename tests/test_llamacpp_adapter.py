@@ -152,6 +152,29 @@ def _verify_response(
     return response
 
 
+def _pending_verify_response(library: Path, model: Path, **overrides: object) -> dict[str, object]:
+    response = _verify_response(
+        library,
+        model,
+        schema_version="pcss.llama-bridge-pending-verify/v1",
+        operation="verify_pending",
+        reconstruction="pending-anchor+batch-score+native-tail-trim/v1",
+    )
+    response.update(
+        {
+            "pending_state_sha256": "d" * 64,
+            "pending_state_bytes": 68,
+            "reference_pending_state_sha256": "d" * 64,
+            "reference_pending_state_bytes": 68,
+            "pending_state_matches": True,
+            "tail_trimmed": True,
+            "pending_token": 8,
+        }
+    )
+    response.update(overrides)
+    return response
+
+
 def _write_bridge(
     path: Path,
     *,
@@ -186,7 +209,7 @@ if sys.argv[1:] == ["--pcss-capabilities"]:
         count = int(counter.read_text(encoding="utf-8")) if counter.exists() else 0
         counter.write_text(str(count + 1), encoding="utf-8")
     print(json.dumps(CAPABILITIES, sort_keys=True))
-elif sys.argv[1:] == ["--pcss-verify-case"]:
+elif sys.argv[1:] in (["--pcss-verify-case"], ["--pcss-verify-pending-case"]):
     print(json.dumps(VERIFY_RESPONSE, sort_keys=True))
     raise SystemExit(VERIFY_EXIT_STATUS)
 else:
@@ -587,4 +610,56 @@ def test_malformed_verify_response_fails_closed(tmp_path: Path, monkeypatch: pyt
 
     assert adapter.availability().execution_class == "TARGET_BACKEND"
     with pytest.raises(ContractError, match="invalid keys"):
+        adapter.verify(_case())
+
+
+def test_pending_native_adapter_uses_explicit_operation_and_validates_pending_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    adapter = LlamaCppBridgeAdapter(
+        environment={"PCSS_LLAMACPP_CONFIG": str(tmp_path / "llamacpp-config.json")},
+        commit_protocol="pending_native",
+    )
+    request_log = tmp_path / "pending-requests.jsonl"
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(
+            library,
+            model,
+            operations=["capabilities", "reference", "verify", "verify_pending", "profile"],
+        ),
+        verify_response=_pending_verify_response(library, model),
+        request_log_path=request_log,
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    outcome = adapter.verify(_case())
+
+    assert outcome.reconstruction_matches
+    calls = _requests(request_log)
+    assert calls[1]["argv"] == ["--pcss-verify-pending-case"]
+    assert calls[1]["request"]["operation"] == "verify_pending"
+
+
+def test_pending_native_adapter_rejects_false_pending_state_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    adapter = LlamaCppBridgeAdapter(
+        environment={"PCSS_LLAMACPP_CONFIG": str(tmp_path / "llamacpp-config.json")},
+        commit_protocol="pending_native",
+    )
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(
+            library,
+            model,
+            operations=["capabilities", "reference", "verify", "verify_pending", "profile"],
+        ),
+        verify_response=_pending_verify_response(library, model, pending_state_matches=False),
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    with pytest.raises(ContractError, match="pending-state match claim"):
         adapter.verify(_case())

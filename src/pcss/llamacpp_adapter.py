@@ -29,6 +29,7 @@ BRIDGE_PROTOCOL_VERSION = "pcss.llama-bridge/v1"
 REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
 CAPABILITIES_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v2"
 VERIFY_SCHEMA_VERSION = "pcss.llama-bridge-verify/v2"
+PENDING_VERIFY_SCHEMA_VERSION = "pcss.llama-bridge-pending-verify/v1"
 
 _CONFIG_FIELDS = {
     "schema_version",
@@ -144,6 +145,15 @@ _VERIFY_RESPONSE_FIELDS = {
     "declared_identity_fields",
     "chat_template_applied",
     "thinking_mode_applied",
+}
+_PENDING_VERIFY_RESPONSE_FIELDS = _VERIFY_RESPONSE_FIELDS | {
+    "pending_state_sha256",
+    "pending_state_bytes",
+    "reference_pending_state_sha256",
+    "reference_pending_state_bytes",
+    "pending_state_matches",
+    "tail_trimmed",
+    "pending_token",
 }
 _FULL_STATE_COMPONENTS = (
     "model_architecture_identity",
@@ -370,12 +380,19 @@ def _case_seed(case: VerifierCase) -> tuple[str, tuple[int, ...]]:
     return seed_id, initial_context_tokens
 
 
-def _verify_request(config: _BridgeConfig, case: VerifierCase) -> tuple[dict[str, Any], str]:
+def _verify_request(
+    config: _BridgeConfig,
+    case: VerifierCase,
+    *,
+    operation: str = "verify",
+) -> tuple[dict[str, Any], str]:
+    if operation not in {"verify", "verify_pending"}:
+        raise ContractError("unsupported llama.cpp verifier operation")
     seed_id, initial_context_tokens = _case_seed(case)
     if not isinstance(case.include_bonus_on_full_accept, bool):
         raise ContractError("case.include_bonus_on_full_accept must be a boolean")
     request = {
-        **_common_request(config, "verify"),
+        **_common_request(config, operation),
         "seed": {"seed_id": seed_id, "initial_context_tokens": list(initial_context_tokens)},
         "case": {
             "case_id": require_string(case.case_id, "case.case_id"),
@@ -405,9 +422,9 @@ def _run_bridge(config: _BridgeConfig, arguments: tuple[str, ...], request: dict
         response = _strict_json_object(completed.stdout, "pcss_llama_bridge response")
         if (
             completed.returncode == 1
-            and request["operation"] == "verify"
-            and response.get("schema_version") == VERIFY_SCHEMA_VERSION
-            and response.get("operation") == "verify"
+            and request["operation"] in {"verify", "verify_pending"}
+            and response.get("schema_version") in {VERIFY_SCHEMA_VERSION, PENDING_VERIFY_SCHEMA_VERSION}
+            and response.get("operation") == request["operation"]
             and response.get("status") == "mismatch"
         ):
             return response
@@ -488,12 +505,11 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
     if probe_digest != restored_digest or probe_bytes != restored_bytes:
         raise ContractError(f"{field} model-memory state round trip changed bytes")
     operations = response["operations"]
-    if not isinstance(operations, list) or tuple(operations) != (
-        "capabilities",
-        "reference",
-        "verify",
-        "profile",
-    ):
+    supported_operation_sets = {
+        ("capabilities", "reference", "verify", "profile"),
+        ("capabilities", "reference", "verify", "verify_pending", "profile"),
+    }
+    if not isinstance(operations, list) or tuple(operations) not in supported_operation_sets:
         raise ContractError(f"{field} has an incomplete operation set")
 
     loaded_library = _absolute_regular_path(
@@ -519,15 +535,29 @@ def _validate_verify_response(
     config: _BridgeConfig,
     case: VerifierCase,
     seed_id: str,
+    *,
+    commit_protocol: str = "serial",
 ) -> AdapterOutcome:
     field = "pcss_llama_bridge verify response"
-    _require_exact_keys(response, _VERIFY_RESPONSE_FIELDS, field)
-    if response["schema_version"] != VERIFY_SCHEMA_VERSION or response["operation"] != "verify":
+    if commit_protocol == "serial":
+        expected_fields = _VERIFY_RESPONSE_FIELDS
+        expected_schema = VERIFY_SCHEMA_VERSION
+        expected_operation = "verify"
+        expected_reconstruction = "batch-score+serial-canonical-commit/v2"
+    elif commit_protocol == "pending_native":
+        expected_fields = _PENDING_VERIFY_RESPONSE_FIELDS
+        expected_schema = PENDING_VERIFY_SCHEMA_VERSION
+        expected_operation = "verify_pending"
+        expected_reconstruction = "pending-anchor+batch-score+native-tail-trim/v1"
+    else:
+        raise ContractError("unsupported llama.cpp verifier commit protocol")
+    _require_exact_keys(response, expected_fields, field)
+    if response["schema_version"] != expected_schema or response["operation"] != expected_operation:
         raise ContractError(f"{field} has an unsupported schema or operation")
     if response["status"] not in {"ok", "mismatch"}:
         raise ContractError(f"{field} has an unsupported status")
     _validate_shared_response_facts(response, config, field)
-    if response["reconstruction"] != "batch-score+serial-canonical-commit/v2":
+    if response["reconstruction"] != expected_reconstruction:
         raise ContractError(f"{field} has an unsupported reconstruction method")
     if response["tokenization_boundary"] != "caller-supplied-raw-token-ids/v1":
         raise ContractError(f"{field} has an unexpected tokenization boundary")
@@ -639,6 +669,27 @@ def _validate_verify_response(
         raise ContractError(f"{field} mutable-state digests disagree with exported state digests")
     if reference_mutable != case.expected_state_digest:
         raise ContractError("native serial reference state differs from the fixture expectation")
+    if commit_protocol == "pending_native":
+        pending_digest = _require_sha256(response["pending_state_sha256"], f"{field}.pending_state_sha256")
+        reference_pending_digest = _require_sha256(
+            response["reference_pending_state_sha256"], f"{field}.reference_pending_state_sha256"
+        )
+        pending_bytes = require_int(response["pending_state_bytes"], f"{field}.pending_state_bytes", minimum=1)
+        reference_pending_bytes = require_int(
+            response["reference_pending_state_bytes"], f"{field}.reference_pending_state_bytes", minimum=1
+        )
+        pending_matches = _require_bool(response["pending_state_matches"], f"{field}.pending_state_matches")
+        if not _require_bool(response["tail_trimmed"], f"{field}.tail_trimmed"):
+            raise ContractError(f"{field} did not trim the rejected verification tail")
+        if pending_matches != (
+            pending_digest == reference_pending_digest and pending_bytes == reference_pending_bytes
+        ):
+            raise ContractError(f"{field} pending-state match claim is inconsistent")
+        expected_pending = correction if correction is not None else bonus
+        if response["pending_token"] != expected_pending:
+            raise ContractError(f"{field} pending token differs from its correction or bonus")
+        if response["status"] == "ok" and not pending_matches:
+            raise ContractError(f"{field} status=ok contradicts its pending-state result")
     reference_next = _response_token(
         response["reference_next_token"], f"{field}.reference_next_token", vocabulary_size
     )
@@ -665,8 +716,16 @@ class LlamaCppBridgeAdapter:
 
     name = "pcss_llama_bridge"
 
-    def __init__(self, *, environment: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        environment: Mapping[str, str] | None = None,
+        commit_protocol: str = "serial",
+    ) -> None:
+        if commit_protocol not in {"serial", "pending_native"}:
+            raise ContractError("unsupported llama.cpp verifier commit protocol")
         self._environment = dict(os.environ if environment is None else environment)
+        self._commit_protocol = commit_protocol
         self._availability: AdapterAvailability | None = None
         self._prepared: _PreparedBridge | None = None
 
@@ -714,17 +773,40 @@ class LlamaCppBridgeAdapter:
         }
         if "runtime_configuration_fingerprint" in getattr(TargetAdapterBinding, "__dataclass_fields__", {}):
             values["schema_version"] = "pcss.verifier-adapter-binding/v2"
-            values["runtime_configuration_fingerprint"] = prepared.config.runtime_configuration_fingerprint
+            values["runtime_configuration_fingerprint"] = (
+                prepared.config.runtime_configuration_fingerprint
+                if self._commit_protocol == "serial"
+                else sha256(
+                    {
+                        "runtime_configuration_fingerprint": prepared.config.runtime_configuration_fingerprint,
+                        "commit_protocol": self._commit_protocol,
+                    }
+                )
+            )
         return TargetAdapterBinding(**values)
 
     def verify(self, case: VerifierCase) -> AdapterOutcome:
         prepared = self._frozen_prepared()
-        request, seed_id = _verify_request(prepared.config, case)
-        response = _run_bridge(prepared.config, ("--pcss-verify-case",), request)
-        return _validate_verify_response(response, prepared.config, case, seed_id)
+        operation = "verify" if self._commit_protocol == "serial" else "verify_pending"
+        argument = "--pcss-verify-case" if self._commit_protocol == "serial" else "--pcss-verify-pending-case"
+        request, seed_id = _verify_request(prepared.config, case, operation=operation)
+        response = _run_bridge(prepared.config, (argument,), request)
+        return _validate_verify_response(
+            response,
+            prepared.config,
+            case,
+            seed_id,
+            commit_protocol=self._commit_protocol,
+        )
 
 
 def create_adapter() -> LlamaCppBridgeAdapter:
     """Factory for ``pcss.verifier_runner --adapter pcss.llamacpp_adapter:create_adapter``."""
 
     return LlamaCppBridgeAdapter()
+
+
+def create_pending_adapter() -> LlamaCppBridgeAdapter:
+    """Factory for the pending-token native-tail-trim correctness experiment."""
+
+    return LlamaCppBridgeAdapter(commit_protocol="pending_native")

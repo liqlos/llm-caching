@@ -37,6 +37,7 @@ constexpr const char * kResultSchema = "pcss.llama-bridge-result/v1";
 constexpr const char * kCapabilitiesSchema = "pcss.llama-bridge-capabilities/v2";
 constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
 constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
+constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
@@ -1304,6 +1305,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("capabilities"),
         Json("reference"),
         Json("verify"),
+        Json("verify_pending"),
         Json("profile"),
     });
     return {Json(std::move(result)), true};
@@ -1552,6 +1554,235 @@ HandledResponse verify(const Json::Object & request) {
     return {Json(std::move(result)), successful};
 }
 
+HandledResponse verify_pending(const Json::Object & request) {
+    require_exact_keys(
+        request,
+        {
+            "schema_version",
+            "operation",
+            "model_artifact",
+            "llama_cpp_library",
+            "llama_cpp_revision",
+            "runtime",
+            "seed",
+            "case",
+        }
+    );
+    require_request_schema(request, "verify_pending");
+    const RequestConfig config = parse_config(request);
+    const SeedSpec seed = parse_seed(request, false);
+    const Json::Object & case_config = as_object(required_field(request, "case"), "case");
+    require_exact_keys(case_config, {"case_id", "draft_tokens", "include_bonus_on_full_accept"});
+    const std::string case_id = required_string(case_config, "case_id");
+    const std::vector<llama_token> draft_tokens = required_tokens(case_config, "draft_tokens");
+    const bool include_bonus = required_boolean(case_config, "include_bonus_on_full_accept");
+    const std::size_t target_count = draft_tokens.size() + 1U;
+    if (seed.initial_context_tokens.size() > config.runtime.n_ctx ||
+        target_count > static_cast<std::size_t>(config.runtime.n_ctx) - seed.initial_context_tokens.size()) {
+        throw BridgeError("invalid_request", "draft_tokens plus requested bonus exceed the remaining n_ctx");
+    }
+    if (draft_tokens.size() + 1U > config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "pending-token verification batch exceeds configured n_batch");
+    }
+
+    ModelRuntime runtime(config);
+    runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
+    runtime.validate_tokens(draft_tokens, "draft_tokens");
+    const std::size_t prefix_size = seed.initial_context_tokens.size() - 1U;
+    const llama_token anchor_token = seed.initial_context_tokens.back();
+    const std::vector<llama_token> prefix_tokens(
+        seed.initial_context_tokens.begin(),
+        seed.initial_context_tokens.end() - 1
+    );
+    auto decode_prefix = [&](Context & context) {
+        if (!prefix_tokens.empty()) {
+            decode_tokens(context, prefix_tokens, 0U, false);
+        }
+    };
+
+    Context serial_target = runtime.make_context();
+    decode_prefix(serial_target);
+    std::vector<llama_token> target_tokens;
+    target_tokens.reserve(target_count);
+    llama_token pending_target = anchor_token;
+    for (std::size_t index = 0; index < target_count; ++index) {
+        decode_tokens(serial_target, std::vector<llama_token>{pending_target}, prefix_size + index, true);
+        pending_target = greedy_argmax(serial_target, runtime.vocabulary_size());
+        target_tokens.push_back(pending_target);
+    }
+
+    Context verifier = runtime.make_context();
+    decode_prefix(verifier);
+    const std::vector<std::uint8_t> prompt_state = snapshot_state(verifier);
+    std::vector<llama_token> verification_batch;
+    verification_batch.reserve(draft_tokens.size() + 1U);
+    verification_batch.push_back(anchor_token);
+    verification_batch.insert(verification_batch.end(), draft_tokens.begin(), draft_tokens.end());
+    decode_one_batch_with_all_logits(verifier, verification_batch, prefix_size);
+    std::vector<llama_token> verification_target_tokens;
+    verification_target_tokens.reserve(target_count);
+    for (std::size_t index = 0; index < verification_batch.size(); ++index) {
+        verification_target_tokens.push_back(greedy_argmax_at(
+            verifier,
+            runtime.vocabulary_size(),
+            static_cast<std::int32_t>(index)
+        ));
+    }
+    const std::vector<std::uint8_t> verifier_draft_state = snapshot_state(verifier);
+
+    std::size_t accepted = 0U;
+    while (accepted < draft_tokens.size() &&
+           draft_tokens[accepted] == verification_target_tokens[accepted]) {
+        ++accepted;
+    }
+    std::vector<llama_token> committed_tokens(
+        draft_tokens.begin(),
+        draft_tokens.begin() + static_cast<std::ptrdiff_t>(accepted)
+    );
+    Json correction(nullptr);
+    Json bonus(nullptr);
+    bool has_pending_commit = false;
+    llama_token pending_commit = 0;
+    if (accepted < draft_tokens.size()) {
+        pending_commit = verification_target_tokens[accepted];
+        committed_tokens.push_back(pending_commit);
+        correction = Json(static_cast<std::int64_t>(pending_commit));
+        has_pending_commit = true;
+    } else if (include_bonus) {
+        pending_commit = verification_target_tokens[draft_tokens.size()];
+        committed_tokens.push_back(pending_commit);
+        bonus = Json(static_cast<std::int64_t>(pending_commit));
+        has_pending_commit = true;
+    }
+    if (committed_tokens.empty()) {
+        throw BridgeError("internal_error", "pending-token verification produced no committed token");
+    }
+
+    std::size_t reference_accepted = 0U;
+    while (reference_accepted < draft_tokens.size() &&
+           draft_tokens[reference_accepted] == target_tokens[reference_accepted]) {
+        ++reference_accepted;
+    }
+    std::vector<llama_token> reference_committed_tokens(
+        draft_tokens.begin(),
+        draft_tokens.begin() + static_cast<std::ptrdiff_t>(reference_accepted)
+    );
+    if (reference_accepted < draft_tokens.size()) {
+        reference_committed_tokens.push_back(target_tokens[reference_accepted]);
+    } else if (include_bonus) {
+        reference_committed_tokens.push_back(target_tokens[draft_tokens.size()]);
+    }
+
+    const std::size_t authoritative_target_count = accepted < draft_tokens.size()
+        ? accepted + 1U
+        : verification_target_tokens.size();
+    const bool verification_targets_match = std::equal(
+        verification_target_tokens.begin(),
+        verification_target_tokens.begin() + static_cast<std::ptrdiff_t>(authoritative_target_count),
+        target_tokens.begin()
+    );
+
+    llama_synchronize(verifier.raw());
+    const llama_pos trim_from = static_cast<llama_pos>(prefix_size + 1U + accepted);
+    const bool tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
+    if (!tail_trimmed) {
+        throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove the rejected verification tail");
+    }
+    const std::vector<std::uint8_t> pending_state = snapshot_state(verifier);
+
+    Context pending_reference = runtime.make_context();
+    decode_prefix(pending_reference);
+    decode_tokens(pending_reference, std::vector<llama_token>{anchor_token}, prefix_size, true);
+    for (std::size_t index = 0; index < reference_accepted; ++index) {
+        decode_tokens(
+            pending_reference,
+            std::vector<llama_token>{draft_tokens[index]},
+            prefix_size + 1U + index,
+            true
+        );
+    }
+    const std::vector<std::uint8_t> reference_pending_state = snapshot_state(pending_reference);
+    const bool pending_state_matches = pending_state == reference_pending_state;
+
+    if (has_pending_commit) {
+        const std::size_t pending_position = prefix_size + 1U + accepted;
+        decode_tokens(verifier, std::vector<llama_token>{pending_commit}, pending_position, true);
+    }
+    const llama_token committed_next = greedy_argmax(verifier, runtime.vocabulary_size());
+    const std::vector<std::uint8_t> committed_state = snapshot_state(verifier);
+
+    Context reference = runtime.make_context();
+    decode_tokens(reference, seed.initial_context_tokens, 0U, false);
+    for (std::size_t index = 0; index < reference_committed_tokens.size(); ++index) {
+        decode_tokens(
+            reference,
+            std::vector<llama_token>{reference_committed_tokens[index]},
+            seed.initial_context_tokens.size() + index,
+            true
+        );
+    }
+    const llama_token reference_next = greedy_argmax(reference, runtime.vocabulary_size());
+    const std::vector<std::uint8_t> reference_state = snapshot_state(reference);
+
+    const bool state_matches = reference_state == committed_state;
+    const bool continuation_matches = reference_next == committed_next;
+    const bool successful = verification_targets_match && pending_state_matches && state_matches && continuation_matches;
+    Json::Object result = result_base(
+        kPendingVerifySchema,
+        "verify_pending",
+        successful ? "ok" : "mismatch"
+    );
+    result["generation_mode"] = Json("greedy_argmax");
+    result["greedy_tie_break"] = Json("lowest-token-id/v1");
+    result["state_export"] = Json(kStateExport);
+    result["reconstruction"] = Json("pending-anchor+batch-score+native-tail-trim/v1");
+    result["seed_id"] = Json(seed.seed_id);
+    result["case_id"] = Json(case_id);
+    result["target_tokens"] = token_array(target_tokens);
+    result["verification_target_tokens"] = token_array(verification_target_tokens);
+    result["verification_targets_match"] = Json(verification_targets_match);
+    result["vocabulary_size"] = Json(static_cast<std::int64_t>(runtime.vocabulary_size()));
+    result["accepted_draft_tokens"] = Json(static_cast<std::int64_t>(accepted));
+    result["reference_accepted_draft_tokens"] = Json(static_cast<std::int64_t>(reference_accepted));
+    result["correction_token"] = std::move(correction);
+    result["bonus_token"] = std::move(bonus);
+    result["committed_tokens"] = token_array(committed_tokens);
+    result["reference_committed_tokens"] = token_array(reference_committed_tokens);
+    result["prompt_state_sha256"] = Json(sha256_hex(prompt_state));
+    result["prompt_state_bytes"] = Json(static_cast<std::int64_t>(prompt_state.size()));
+    result["reference_state_sha256"] = Json(sha256_hex(reference_state));
+    result["reference_state_bytes"] = Json(static_cast<std::int64_t>(reference_state.size()));
+    result["committed_state_sha256"] = Json(sha256_hex(committed_state));
+    result["committed_state_bytes"] = Json(static_cast<std::int64_t>(committed_state.size()));
+    result["verifier_draft_state_sha256"] = Json(sha256_hex(verifier_draft_state));
+    result["verifier_draft_state_bytes"] = Json(static_cast<std::int64_t>(verifier_draft_state.size()));
+    result["reference_mutable_state_digest"] = Json(sha256_hex(reference_state));
+    result["committed_mutable_state_digest"] = Json(sha256_hex(committed_state));
+    result["mutable_state_digest"] = Json(sha256_hex(committed_state));
+    result["state_matches"] = Json(state_matches);
+    result["reference_next_token"] = Json(static_cast<std::int64_t>(reference_next));
+    result["committed_next_token"] = Json(static_cast<std::int64_t>(committed_next));
+    result["continuation_matches"] = Json(continuation_matches);
+    result["pending_state_sha256"] = Json(sha256_hex(pending_state));
+    result["pending_state_bytes"] = Json(static_cast<std::int64_t>(pending_state.size()));
+    result["reference_pending_state_sha256"] = Json(sha256_hex(reference_pending_state));
+    result["reference_pending_state_bytes"] = Json(static_cast<std::int64_t>(reference_pending_state.size()));
+    result["pending_state_matches"] = Json(pending_state_matches);
+    result["tail_trimmed"] = Json(tail_trimmed);
+    result["pending_token"] = has_pending_commit
+        ? Json(static_cast<std::int64_t>(pending_commit))
+        : Json(nullptr);
+    result["configuration"] = runtime_echo(config);
+    result["observed_context"] = observed_context(verifier);
+    result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
+    result["state_api"] = Json(kStateApi);
+    result["declared_identity_fields"] = Json("caller-declared-not-verified-by-bridge/v1");
+    result["chat_template_applied"] = Json(false);
+    result["thinking_mode_applied"] = Json(false);
+    result["sampler_rng_state"] = Json("not-applicable-no-sampler-or-rng-in-greedy-bridge/v1");
+    return {Json(std::move(result)), successful};
+}
+
 std::vector<std::uint32_t> required_k_values(const Json::Object & profile) {
     const Json::Array & values = as_array(required_field(profile, "k_values"), "profile.k_values");
     if (values.empty()) {
@@ -1775,6 +2006,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     if (operation == "verify") {
         return verify(object);
     }
+    if (operation == "verify_pending") {
+        return verify_pending(object);
+    }
     if (operation == "profile") {
         return profile(object);
     }
@@ -1803,7 +2037,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, or --pcss-profile"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, or --pcss-profile"
         );
     }
     const std::string argument(argv[1]);
@@ -1816,12 +2050,15 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-verify-case") {
         return "verify";
     }
+    if (argument == "--pcss-verify-pending-case") {
+        return "verify_pending";
+    }
     if (argument == "--pcss-profile") {
         return "profile";
     }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, or --pcss-verify-case"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, or --pcss-profile"
     );
 }
 
