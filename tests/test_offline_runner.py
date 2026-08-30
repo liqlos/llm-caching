@@ -114,3 +114,13 @@ def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_pat
             command_arguments=(),
             expected_rfc_sha256=PCSS_MASTER_RFC_SHA256,
         )
+
+
+def test_offline_fixture_accepts_fail_closed_normalized_jsonl(tmp_path: Path) -> None:
+    source = json.loads((ROOT / "fixtures/replay/chronological-oracle-v1.json").read_text(encoding="utf-8"))
+    fixture = tmp_path / "trace.jsonl"
+    fixture.write_text("".join(json.dumps(record) + "\n" for record in source), encoding="utf-8")
+
+    records = offline_runner.load_trace_fixture(fixture)
+
+    assert [record["record_id"] for record in records] == ["history-repo-a", "target-repo-b"]

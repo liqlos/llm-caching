@@ -26,6 +26,7 @@ from .capacity import (
 )
 from .canonical import ContractError
 from .experiments import compare_scope_policies
+from .importer import import_jsonl
 from .metrics import (
     accepted_prefix_value,
     active_capture_ratio,
@@ -71,6 +72,11 @@ def _json_value(value: Any) -> Any:
 def load_trace_fixture(path: Path) -> list[dict[str, Any]]:
     """Load a visible trace fixture through the same fail-closed trace contract."""
 
+    if path.suffix == ".jsonl":
+        result = import_jsonl(path, require_uniform_fingerprints=True)
+        if not result.records:
+            raise ContractError("offline trace fixture must not be empty")
+        return [dict(record) for record in result.records]
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
