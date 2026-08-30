@@ -2680,14 +2680,15 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         }
     };
 
-    Context serial_before = runtime.make_context();
-    Context candidate = runtime.make_context();
-    Context serial_after = runtime.make_context();
+    // A 24 GiB Apple-unified-memory target cannot safely retain three Metal
+    // contexts for the same Q4 model.  Reuse one context and restore the
+    // identical prefilling snapshot before each interleaved arm instead.
+    Context working = runtime.make_context();
     for (std::size_t index = 0; index < warmup_repetitions; ++index) {
-        restore_state(serial_before, prompt_state);
-        restore_state(candidate, prompt_state);
-        const DecodeRun serial = run_serial(serial_before);
-        const DecodeRun speculative = run_candidate(candidate);
+        restore_state(working, prompt_state);
+        const DecodeRun serial = run_serial(working);
+        restore_state(working, prompt_state);
+        const DecodeRun speculative = run_candidate(working);
         require_equal(serial, speculative, "warmup");
     }
     Json::Array measurements;
@@ -2695,12 +2696,12 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     std::vector<llama_token> authoritative_tokens;
     std::vector<std::uint8_t> authoritative_state;
     for (std::size_t index = 0; index < measurement_repetitions; ++index) {
-        restore_state(serial_before, prompt_state);
-        restore_state(candidate, prompt_state);
-        restore_state(serial_after, prompt_state);
-        const DecodeRun before = run_serial(serial_before);
-        const DecodeRun speculative = run_candidate(candidate);
-        const DecodeRun after = run_serial(serial_after);
+        restore_state(working, prompt_state);
+        const DecodeRun before = run_serial(working);
+        restore_state(working, prompt_state);
+        const DecodeRun speculative = run_candidate(working);
+        restore_state(working, prompt_state);
+        const DecodeRun after = run_serial(working);
         require_equal(before, speculative, "measurement");
         require_equal(after, speculative, "measurement repeat");
         if (before.emitted != after.emitted || before.state != after.state) {
@@ -2750,7 +2751,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     result["provider_integration"] = Json("static-trace-candidate/provider-lookup-excluded/v1");
     result["exact_output_and_state"] = Json(true);
     result["configuration"] = runtime_echo(config);
-    result["observed_context"] = observed_context(candidate);
+    result["observed_context"] = observed_context(working);
     result["state_export"] = Json(kStateExport);
     result["state_api"] = Json(kStateApi);
     result["generation_mode"] = Json("greedy_argmax");
