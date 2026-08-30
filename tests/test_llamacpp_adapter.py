@@ -158,6 +158,7 @@ def _write_bridge(
     verify_response: dict[str, object],
     request_log_path: Path | None = None,
     capability_count_path: Path | None = None,
+    verify_exit_status: int = 0,
 ) -> None:
     script = f"""#!{sys.executable}
 import json
@@ -168,6 +169,7 @@ CAPABILITIES = {capabilities!r}
 VERIFY_RESPONSE = {verify_response!r}
 REQUEST_LOG_PATH = {str(request_log_path) if request_log_path is not None else None!r}
 CAPABILITY_COUNT_PATH = {str(capability_count_path) if capability_count_path is not None else None!r}
+VERIFY_EXIT_STATUS = {verify_exit_status!r}
 
 def read_request():
     payload = json.loads(sys.stdin.read())
@@ -185,6 +187,7 @@ if sys.argv[1:] == ["--pcss-capabilities"]:
     print(json.dumps(CAPABILITIES, sort_keys=True))
 elif sys.argv[1:] == ["--pcss-verify-case"]:
     print(json.dumps(VERIFY_RESPONSE, sort_keys=True))
+    raise SystemExit(VERIFY_EXIT_STATUS)
 else:
     raise SystemExit(2)
 """
@@ -446,6 +449,32 @@ def test_verify_uses_exact_native_request_and_maps_outcome(tmp_path: Path, monke
     assert "target_tokens" not in verify_request
     assert "expected_committed_tokens" not in verify_request
     assert "expected_state_digest" not in verify_request
+
+
+def test_verify_maps_structured_native_mismatch_when_bridge_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(library, model),
+        verify_response=_verify_response(
+            library,
+            model,
+            status="mismatch",
+            state_matches=False,
+            batched_state_sha256="b" * 64,
+            batched_state_bytes=73,
+            speculative_mutable_state_digest="b" * 64,
+        ),
+        verify_exit_status=1,
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    outcome = adapter.verify(_case())
+
+    assert not outcome.reconstruction_matches
+    assert outcome.continuation_matches
 
 
 def test_verify_rejects_native_target_prefix_that_disagrees_with_fixture(

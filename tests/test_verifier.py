@@ -5,8 +5,10 @@ from pathlib import Path
 
 from pcss.verifier import (
     AdapterAvailability,
+    AdapterOutcome,
     ScriptedFixtureAdapter,
     TargetAdapterBinding,
+    TargetExecutionPermit,
     TargetFixtureProvenance,
     UnavailableAdapter,
     VerifierCase,
@@ -77,6 +79,40 @@ def test_state_mismatch_is_a_failure_not_a_hardware_pass() -> None:
     assert receipt.cases[0].failures == ("mutable_state_mismatch",)
 
 
+class ReconstructionMismatchAdapter:
+    name = "reconstruction-mismatch"
+
+    def availability(self) -> AdapterAvailability:
+        return AdapterAvailability("TARGET_BACKEND", "native mismatch receipt")
+
+    def verify(self, case: VerifierCase) -> AdapterOutcome:
+        return AdapterOutcome(
+            accepted_draft_tokens=1,
+            correction_token=None,
+            bonus_token=None,
+            committed_tokens=case.expected_committed_tokens,
+            mutable_state_digest=case.expected_state_digest,
+            reconstruction_matches=False,
+        )
+
+
+def test_native_reconstruction_mismatch_is_a_target_failure() -> None:
+    adapter = ReconstructionMismatchAdapter()
+    harness = VerifierHarness(
+        adapter,
+        target_execution_permit=TargetExecutionPermit(
+            adapter_name=adapter.name,
+            host_fingerprint="a" * 64,
+            adapter_binding_fingerprint="b" * 64,
+        ),
+    )
+
+    receipt = harness.k_sweep((case("native-mismatch", (1,), (1,), (1,)),))
+
+    assert receipt.status == "FAILED"
+    assert receipt.execution_class == "TARGET_BACKEND"
+    assert receipt.cases[0].state_matches is False
+    assert receipt.cases[0].failures == ("serial_batched_state_mismatch",)
 def test_fixture_is_explicitly_offline_not_a_hardware_receipt() -> None:
     fixture = Path(__file__).parents[1] / "fixtures" / "verifier" / "offline_token_state_cases.json"
     payload = json.loads(fixture.read_text())

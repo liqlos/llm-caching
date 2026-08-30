@@ -204,6 +204,8 @@ class AdapterOutcome:
     bonus_token: int | None
     committed_tokens: tuple[int, ...]
     mutable_state_digest: str
+    reconstruction_matches: bool = True
+    continuation_matches: bool = True
 
     def __post_init__(self) -> None:
         require_int(self.accepted_draft_tokens, "outcome.accepted_draft_tokens", minimum=0)
@@ -213,6 +215,8 @@ class AdapterOutcome:
                 require_int(value, f"outcome.{field_name}", minimum=0)
         _tokens(self.committed_tokens, "outcome.committed_tokens", allow_empty=True)
         require_string(self.mutable_state_digest, "outcome.mutable_state_digest")
+        if not isinstance(self.reconstruction_matches, bool) or not isinstance(self.continuation_matches, bool):
+            raise ContractError("outcome reconstruction and continuation matches must be booleans")
 
 
 class VerifierAdapter(Protocol):
@@ -352,10 +356,15 @@ class VerifierHarness:
         for case in cases:
             outcome = self.adapter.verify(case)
             failures: list[str] = []
+            if not outcome.reconstruction_matches:
+                failures.append("serial_batched_state_mismatch")
+            if not outcome.continuation_matches:
+                failures.append("serial_batched_continuation_mismatch")
             if outcome.committed_tokens != case.expected_committed_tokens:
                 failures.append("committed_tokens_mismatch")
-            state_matches = outcome.mutable_state_digest == case.expected_state_digest
-            if not state_matches:
+            digest_matches = outcome.mutable_state_digest == case.expected_state_digest
+            state_matches = outcome.reconstruction_matches and digest_matches
+            if not digest_matches:
                 failures.append("mutable_state_mismatch")
             if outcome.accepted_draft_tokens > len(case.draft_tokens):
                 failures.append("accepted_count_out_of_range")

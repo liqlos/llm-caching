@@ -7,7 +7,14 @@ import pytest
 
 from pcss import verifier_runner
 from pcss.canonical import ContractError
-from pcss.verifier import AdapterAvailability, ScriptedFixtureAdapter, TargetHostIdentity, VerifierCase, fixture_state_digest
+from pcss.verifier import (
+    AdapterAvailability,
+    ScriptedFixtureAdapter,
+    TargetExecutionPermit,
+    TargetHostIdentity,
+    VerifierCase,
+    fixture_state_digest,
+)
 from pcss.verifier_runner import _authorize_target_backend, _require_fixture_target_compatibility, execute_suite, load_cases
 
 
@@ -234,6 +241,51 @@ def test_target_authorization_rejects_a_different_explicit_llama_cpp_build_field
 
     with pytest.raises(ContractError, match="llama.cpp build fingerprint"):
         _authorize_target_backend(NamedAdapter(), manifest, host, binding)
+
+
+class AuthorizedFailingAdapter:
+    name = "authorized-failing-target"
+
+    def availability(self) -> AdapterAvailability:
+        return AdapterAvailability("TARGET_BACKEND", "prepared target adapter")
+
+    def verify(self, case: VerifierCase):
+        raise ContractError("native bridge execution failure")
+
+
+def test_runner_records_a_target_execution_failure_after_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = tmp_path / "cases.json"
+    manifest = tmp_path / "manifest.json"
+    fixture.write_text(json.dumps(fixture_payload()))
+    manifest.write_text(json.dumps(unfilled_manifest()))
+    host, binding, _ = _target_authorization_inputs()
+    permit = TargetExecutionPermit(
+        adapter_name=AuthorizedFailingAdapter.name,
+        host_fingerprint=host.fingerprint,
+        adapter_binding_fingerprint="f" * 64,
+    )
+    monkeypatch.setattr(verifier_runner, "_require_observed_target_manifest", lambda value: None)
+    monkeypatch.setattr(verifier_runner, "capture_target_observation", lambda adapter: (host, binding))
+    monkeypatch.setattr(verifier_runner, "_require_fixture_target_compatibility", lambda cases, observed: None)
+    monkeypatch.setattr(verifier_runner, "_authorize_target_backend", lambda *args: permit)
+    monkeypatch.setattr(verifier_runner, "resolve_git_revision", lambda root: "f" * 40)
+    monkeypatch.setattr(verifier_runner, "recorded_module_command", lambda module, arguments, root: "test-command")
+
+    receipt = execute_suite(
+        adapter=AuthorizedFailingAdapter(),
+        suite="forced-rejection",
+        fixture_path=fixture,
+        manifest_path=manifest,
+        repository_root=Path(__file__).resolve().parents[1],
+        command_arguments=("--suite", "forced-rejection"),
+    )
+
+    assert receipt.evidence_class == "LOCAL_MEASURED"
+    assert receipt.status == "FAILED"
+    assert receipt.payload["metadata"]["target_execution"]["status"] == "failed"
+    assert "native bridge execution failure" in receipt.payload["reason"]
 
 
 class SelfDeclaredTargetAdapter:

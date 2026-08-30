@@ -387,6 +387,18 @@ def _not_run_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> Harne
     )
 
 
+def _failed_execution_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
+    return HarnessReceipt(
+        suite=suite,
+        adapter=require_string(adapter.name, "adapter.name"),
+        status="FAILED",
+        execution_class="TARGET_BACKEND",
+        reason=reason,
+        cases=(),
+        metadata={"target_execution": {"status": "failed", "reason": reason}},
+    )
+
+
 def _run_suite(harness: VerifierHarness, suite: str, cases: tuple[VerifierCase, ...]) -> HarnessReceipt:
     suites = {
         "k-sweep": harness.k_sweep,
@@ -425,9 +437,12 @@ def execute_suite(
             # Authorization errors must leave an auditable NOT_RUN receipt and never call verify().
             harness_receipt = _not_run_receipt(suite, adapter, f"target authorization rejected: {error}")
         else:
-            harness_receipt = _run_suite(
-                VerifierHarness(frozen_adapter, target_execution_permit=permit), suite, cases
-            )
+            try:
+                harness_receipt = _run_suite(
+                    VerifierHarness(frozen_adapter, target_execution_permit=permit), suite, cases
+                )
+            except Exception as error:
+                harness_receipt = _failed_execution_receipt(suite, adapter, f"target verification execution failed: {error}")
     else:
         harness_receipt = _run_suite(VerifierHarness(frozen_adapter), suite, cases)
 

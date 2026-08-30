@@ -397,6 +397,14 @@ def _run_bridge(config: _BridgeConfig, arguments: tuple[str, ...], request: dict
     except (OSError, UnicodeError, subprocess.TimeoutExpired) as error:
         raise ContractError("pcss_llama_bridge process did not complete") from error
     if completed.returncode != 0:
+        response = _strict_json_object(completed.stdout, "pcss_llama_bridge response")
+        if (
+            request["operation"] == "verify"
+            and response.get("schema_version") == VERIFY_SCHEMA_VERSION
+            and response.get("operation") == "verify"
+            and response.get("status") == "mismatch"
+        ):
+            return response
         raise ContractError("pcss_llama_bridge process returned a non-zero exit status")
     return _strict_json_object(completed.stdout, "pcss_llama_bridge response")
 
@@ -505,8 +513,8 @@ def _validate_verify_response(
     _require_exact_keys(response, _VERIFY_RESPONSE_FIELDS, field)
     if response["schema_version"] != VERIFY_SCHEMA_VERSION or response["operation"] != "verify":
         raise ContractError(f"{field} has an unsupported schema or operation")
-    if response["status"] != "ok":
-        raise ContractError(f"{field} is not a successful serial-vs-batch verification")
+    if response["status"] not in {"ok", "mismatch"}:
+        raise ContractError(f"{field} has an unsupported status")
     _validate_shared_response_facts(response, config, field)
     if response["reconstruction"] != "serial-vs-one-batch/v1":
         raise ContractError(f"{field} has an unsupported reconstruction method")
@@ -574,20 +582,22 @@ def _validate_verify_response(
         response["speculative_mutable_state_digest"], f"{field}.speculative_mutable_state_digest"
     )
     mutable_state_digest = _require_sha256(response["mutable_state_digest"], f"{field}.mutable_state_digest")
-    if not _require_bool(response["state_matches"], f"{field}.state_matches"):
-        raise ContractError(f"{field} serial and batched state did not match")
-    if serial_digest != batched_digest or serial_bytes != batched_bytes:
-        raise ContractError(f"{field} serial and batched full-state digests differ")
+    reconstruction_matches = _require_bool(response["state_matches"], f"{field}.state_matches")
+    continuation_matches = _require_bool(response["continuation_matches"], f"{field}.continuation_matches")
+    if response["status"] == "ok" and not (reconstruction_matches and continuation_matches):
+        raise ContractError(f"{field} status=ok contradicts its reconstruction result")
+    if response["status"] == "mismatch" and reconstruction_matches and continuation_matches:
+        raise ContractError(f"{field} status=mismatch contradicts its reconstruction result")
+    if reconstruction_matches and (serial_digest != batched_digest or serial_bytes != batched_bytes):
+        raise ContractError(f"{field} matching serial and batched full-state digests differ")
     if serial_mutable != serial_digest or speculative_mutable != batched_digest or mutable_state_digest != serial_digest:
         raise ContractError(f"{field} mutable-state digests disagree with full-state digests")
     if mutable_state_digest != case.expected_state_digest:
         raise ContractError("native mutable-state digest differs from the fixture expectation")
     serial_next = _response_token(response["serial_next_token"], f"{field}.serial_next_token", vocabulary_size)
     batched_next = _response_token(response["batched_next_token"], f"{field}.batched_next_token", vocabulary_size)
-    if not _require_bool(response["continuation_matches"], f"{field}.continuation_matches"):
-        raise ContractError(f"{field} serial and batched continuation did not match")
-    if serial_next != batched_next:
-        raise ContractError(f"{field} continuation tokens differ despite a match claim")
+    if continuation_matches and serial_next != batched_next:
+        raise ContractError(f"{field} matching continuation tokens differ")
 
     return AdapterOutcome(
         accepted_draft_tokens=accepted,
@@ -595,6 +605,8 @@ def _validate_verify_response(
         bonus_token=bonus,
         committed_tokens=committed,
         mutable_state_digest=mutable_state_digest,
+        reconstruction_matches=reconstruction_matches,
+        continuation_matches=continuation_matches,
     )
 
 
