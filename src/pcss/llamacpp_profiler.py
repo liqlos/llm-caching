@@ -33,6 +33,7 @@ from .verifier_runner import observe_target_host
 
 
 PROFILE_SCHEMA_VERSION = "pcss.llama-bridge-profile/v1"
+PENDING_PROFILE_SCHEMA_VERSION = "pcss.llama-bridge-pending-profile/v1"
 REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
 _RESPONSE_FIELDS = {
     "schema_version",
@@ -101,16 +102,20 @@ def _request(
     k_values: tuple[int, ...],
     warmup_repetitions: int,
     measurement_repetitions: int,
+    commit_protocol: str = "serial",
 ) -> dict[str, Any]:
+    if commit_protocol not in {"serial", "pending_native"}:
+        raise ContractError("unsupported verifier profile commit protocol")
     if not k_values or len(set(k_values)) != len(k_values) or any(k < 1 for k in k_values):
         raise ContractError("profile k values must be positive and unique")
-    if max(k_values) > config.runtime["n_batch"]:
+    required_batch = max(k_values) + (1 if commit_protocol == "pending_native" else 0)
+    if required_batch > config.runtime["n_batch"]:
         raise ContractError("profile k exceeds configured n_batch")
     if warmup_repetitions < 0 or measurement_repetitions < 2:
         raise ContractError("profile requires non-negative warmups and at least two measurements")
     return {
         "schema_version": REQUEST_SCHEMA_VERSION,
-        "operation": "profile",
+        "operation": "profile" if commit_protocol == "serial" else "profile_pending",
         "model_artifact": str(config.model_artifact),
         "llama_cpp_library": str(config.llama_cpp_library),
         "llama_cpp_revision": config.llama_cpp_revision,
@@ -125,9 +130,16 @@ def _request(
 
 
 def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, Any]:
+    operation = request.get("operation")
+    if operation == "profile":
+        argument = "--pcss-profile"
+    elif operation == "profile_pending":
+        argument = "--pcss-profile-pending"
+    else:
+        raise ContractError("unsupported pcss_llama_bridge profile operation")
     try:
         completed = subprocess.run(
-            (str(config.bridge_executable), "--pcss-profile"),
+            (str(config.bridge_executable), argument),
             input=canonical_json(request) + "\n",
             capture_output=True,
             check=False,
@@ -163,19 +175,32 @@ def _validate_response(
     k_values: tuple[int, ...],
     warmup_repetitions: int,
     measurement_repetitions: int,
+    commit_protocol: str = "serial",
 ) -> tuple[dict[str, Any], ...]:
+    if commit_protocol == "serial":
+        expected_schema = PROFILE_SCHEMA_VERSION
+        expected_operation = "profile"
+        expected_scope = "decode-and-synchronize/no-context-creation/v1"
+        expected_boundary = "isolated-perfect-draft-verifier-profile/not-live-pcss/v1"
+    elif commit_protocol == "pending_native":
+        expected_schema = PENDING_PROFILE_SCHEMA_VERSION
+        expected_operation = "profile_pending"
+        expected_scope = "pending-anchor-decode-and-synchronize/no-context-creation/v1"
+        expected_boundary = "isolated-exact-state-pending-token-profile/not-live-pcss/v1"
+    else:
+        raise ContractError("unsupported verifier profile commit protocol")
     require_exact_keys(response, _RESPONSE_FIELDS, "profile response")
     if (
-        response["schema_version"] != PROFILE_SCHEMA_VERSION
-        or response["operation"] != "profile"
+        response["schema_version"] != expected_schema
+        or response["operation"] != expected_operation
         or response["status"] != "ok"
         or response["backend"] != "llama.cpp"
     ):
         raise ContractError("profile response is not a successful supported llama.cpp profile")
     expected_literals = {
         "measurement_clock": "std::chrono::steady_clock/nanoseconds/v1",
-        "measurement_scope": "decode-and-synchronize/no-context-creation/v1",
-        "claim_boundary": "isolated-perfect-draft-verifier-profile/not-live-pcss/v1",
+        "measurement_scope": expected_scope,
+        "claim_boundary": expected_boundary,
         "state_export": "model-architecture+memory-state/v2",
         "state_api": "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2",
         "generation_mode": "greedy_argmax",
@@ -317,6 +342,7 @@ def run_profile(
     baseline_tolerance: float,
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
+    commit_protocol: str = "serial",
 ) -> ResultReceipt:
     config = load_bridge_config(config_path)
     seeds = load_fixture_seeds(seeds_path)
@@ -349,6 +375,7 @@ def run_profile(
         k_values=k_values,
         warmup_repetitions=warmup_repetitions,
         measurement_repetitions=measurement_repetitions,
+        commit_protocol=commit_protocol,
     )
     response = bridge_runner(config, request)
     profiles = _validate_response(
@@ -358,6 +385,7 @@ def run_profile(
         k_values=k_values,
         warmup_repetitions=warmup_repetitions,
         measurement_repetitions=measurement_repetitions,
+        commit_protocol=commit_protocol,
     )
     analysis = _analyze(profiles, baseline_tolerance=baseline_tolerance)
     revision = resolve_git_revision(repository_root)
@@ -377,7 +405,11 @@ def run_profile(
         },
         status=analysis["decision"],
         payload={
-            "kind": "isolated_perfect_draft_verifier_profile",
+            "kind": (
+                "isolated_perfect_draft_verifier_profile"
+                if commit_protocol == "serial"
+                else "isolated_exact_state_pending_token_profile"
+            ),
             "host_identity": host.as_dict(),
             "raw_profile": dict(response),
             "analysis": analysis,
@@ -401,6 +433,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-repetitions", type=int, default=2)
     parser.add_argument("--measurement-repetitions", type=int, default=8)
     parser.add_argument("--baseline-relative-tolerance", type=float, default=0.05)
+    parser.add_argument("--commit-protocol", choices=("serial", "pending_native"), default="serial")
     return parser
 
 
@@ -419,6 +452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         warmup_repetitions=args.warmup_repetitions,
         measurement_repetitions=args.measurement_repetitions,
         baseline_tolerance=args.baseline_relative_tolerance,
+        commit_protocol=args.commit_protocol,
     )
     return 0
 

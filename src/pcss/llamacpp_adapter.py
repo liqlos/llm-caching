@@ -508,6 +508,7 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
     supported_operation_sets = {
         ("capabilities", "reference", "verify", "profile"),
         ("capabilities", "reference", "verify", "verify_pending", "profile"),
+        ("capabilities", "reference", "verify", "verify_pending", "profile", "profile_pending"),
     }
     if not isinstance(operations, list) or tuple(operations) not in supported_operation_sets:
         raise ContractError(f"{field} has an incomplete operation set")

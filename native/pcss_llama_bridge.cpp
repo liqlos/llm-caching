@@ -39,6 +39,7 @@ constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
 constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
 constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
+constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -1307,6 +1308,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("verify"),
         Json("verify_pending"),
         Json("profile"),
+        Json("profile_pending"),
     });
     return {Json(std::move(result)), true};
 }
@@ -1991,6 +1993,198 @@ HandledResponse profile(const Json::Object & request) {
     return {Json(std::move(result)), true};
 }
 
+HandledResponse profile_pending(const Json::Object & request) {
+    require_exact_keys(
+        request,
+        {
+            "schema_version",
+            "operation",
+            "model_artifact",
+            "llama_cpp_library",
+            "llama_cpp_revision",
+            "runtime",
+            "seed",
+            "profile",
+        }
+    );
+    require_request_schema(request, "profile_pending");
+    const RequestConfig config = parse_config(request);
+    const SeedSpec seed = parse_seed(request, false);
+    const Json::Object & profile_config = as_object(required_field(request, "profile"), "profile");
+    require_exact_keys(profile_config, {"k_values", "warmup_repetitions", "measurement_repetitions"});
+    const std::vector<std::uint32_t> k_values = required_k_values(profile_config);
+    const std::uint32_t warmup_repetitions = required_u32(profile_config, "warmup_repetitions", 0U);
+    const std::uint32_t measurement_repetitions = required_u32(
+        profile_config,
+        "measurement_repetitions",
+        2U
+    );
+    const std::uint32_t max_k = *std::max_element(k_values.begin(), k_values.end());
+    if (static_cast<std::size_t>(max_k) + 1U > config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "pending profile anchor plus k exceeds configured n_batch");
+    }
+    if (seed.initial_context_tokens.size() > config.runtime.n_ctx ||
+        static_cast<std::size_t>(max_k) + 1U >
+            static_cast<std::size_t>(config.runtime.n_ctx) - seed.initial_context_tokens.size()) {
+        throw BridgeError("invalid_request", "pending profile exceeds remaining n_ctx");
+    }
+
+    ModelRuntime runtime(config);
+    runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
+    const std::size_t prefix_size = seed.initial_context_tokens.size() - 1U;
+    const llama_token anchor_token = seed.initial_context_tokens.back();
+    const std::vector<llama_token> prefix_tokens(
+        seed.initial_context_tokens.begin(),
+        seed.initial_context_tokens.end() - 1
+    );
+    auto prefill_prefix = [&](Context & context) {
+        if (!prefix_tokens.empty()) {
+            decode_tokens(context, prefix_tokens, 0U, false);
+        }
+        llama_synchronize(context.raw());
+    };
+
+    Context prompt = runtime.make_context();
+    prefill_prefix(prompt);
+    const std::vector<std::uint8_t> prompt_state = snapshot_state(prompt);
+
+    Context target = runtime.make_context();
+    prefill_prefix(target);
+    decode_tokens(target, std::vector<llama_token>{anchor_token}, prefix_size, true);
+    const std::vector<llama_token> perfect_tokens = serial_greedy_tokens(
+        target,
+        prefix_size + 1U,
+        static_cast<std::size_t>(max_k) + 1U,
+        runtime.vocabulary_size()
+    );
+
+    Json::Array profiles;
+    for (const std::uint32_t k : k_values) {
+        const std::vector<llama_token> draft(perfect_tokens.begin(), perfect_tokens.begin() + k);
+        std::vector<llama_token> verification_batch;
+        verification_batch.reserve(draft.size() + 1U);
+        verification_batch.push_back(anchor_token);
+        verification_batch.insert(verification_batch.end(), draft.begin(), draft.end());
+
+        Context serial_before = runtime.make_context();
+        Context verifier = runtime.make_context();
+        Context serial_after = runtime.make_context();
+        Context restore_before_probe = runtime.make_context();
+        Context restore_batch_probe = runtime.make_context();
+        Context restore_after_probe = runtime.make_context();
+
+        auto run_serial = [&](Context & context) {
+            for (std::size_t index = 0; index < verification_batch.size(); ++index) {
+                decode_tokens(
+                    context,
+                    std::vector<llama_token>{verification_batch[index]},
+                    prefix_size + index,
+                    true
+                );
+            }
+            llama_synchronize(context.raw());
+        };
+        auto run_batch = [&](Context & context) {
+            decode_one_batch_with_all_logits(context, verification_batch, prefix_size);
+            llama_synchronize(context.raw());
+        };
+        auto require_exact_state = [&](Context & serial, Context & batch) {
+            const std::vector<std::uint8_t> serial_state = snapshot_state(serial);
+            const std::vector<std::uint8_t> batch_state = snapshot_state(batch);
+            if (serial_state != batch_state ||
+                greedy_argmax(serial, runtime.vocabulary_size()) != greedy_argmax(batch, runtime.vocabulary_size())) {
+                throw BridgeError(
+                    "profile_state_mismatch",
+                    "pending-token batch state differs from the serial target state"
+                );
+            }
+        };
+
+        for (std::uint32_t iteration = 0; iteration < warmup_repetitions; ++iteration) {
+            serial_before = runtime.make_context();
+            prefill_prefix(serial_before);
+            run_serial(serial_before);
+            verifier = runtime.make_context();
+            prefill_prefix(verifier);
+            run_batch(verifier);
+            require_exact_state(serial_before, verifier);
+            serial_after = runtime.make_context();
+            prefill_prefix(serial_after);
+            run_serial(serial_after);
+        }
+
+        Json::Array measurements;
+        for (std::uint32_t iteration = 0; iteration < measurement_repetitions; ++iteration) {
+            serial_before = runtime.make_context();
+            prefill_prefix(serial_before);
+            const std::int64_t restore_before_ns = measured_nanoseconds([&]() {
+                restore_state(restore_before_probe, prompt_state);
+                llama_synchronize(restore_before_probe.raw());
+            });
+            const std::int64_t serial_before_ns = measured_nanoseconds([&]() { run_serial(serial_before); });
+            verifier = runtime.make_context();
+            prefill_prefix(verifier);
+            const std::int64_t restore_batch_ns = measured_nanoseconds([&]() {
+                restore_state(restore_batch_probe, prompt_state);
+                llama_synchronize(restore_batch_probe.raw());
+            });
+            const std::int64_t batch_verify_ns = measured_nanoseconds([&]() { run_batch(verifier); });
+            require_exact_state(serial_before, verifier);
+            serial_after = runtime.make_context();
+            prefill_prefix(serial_after);
+            const std::int64_t restore_after_ns = measured_nanoseconds([&]() {
+                restore_state(restore_after_probe, prompt_state);
+                llama_synchronize(restore_after_probe.raw());
+            });
+            const std::int64_t serial_after_ns = measured_nanoseconds([&]() { run_serial(serial_after); });
+            const std::int64_t snapshot_ns = measured_nanoseconds([&]() {
+                const std::vector<std::uint8_t> state = snapshot_state(verifier);
+                if (state.empty()) {
+                    throw BridgeError("internal_error", "pending profile snapshot unexpectedly empty");
+                }
+            });
+
+            Json::Object row;
+            row["iteration"] = Json(static_cast<std::int64_t>(iteration));
+            row["restore_before_ns"] = Json(restore_before_ns);
+            row["serial_before_ns"] = Json(serial_before_ns);
+            row["restore_batch_ns"] = Json(restore_batch_ns);
+            row["batch_verify_ns"] = Json(batch_verify_ns);
+            row["restore_after_ns"] = Json(restore_after_ns);
+            row["serial_after_ns"] = Json(serial_after_ns);
+            row["snapshot_ns"] = Json(snapshot_ns);
+            measurements.emplace_back(Json(std::move(row)));
+        }
+
+        Json::Object profile_row;
+        profile_row["k"] = Json(static_cast<std::int64_t>(k));
+        profile_row["perfect_draft_tokens"] = token_array(draft);
+        profile_row["measurements"] = Json(std::move(measurements));
+        profiles.emplace_back(Json(std::move(profile_row)));
+    }
+
+    Json::Object result = result_base(kPendingProfileSchema, "profile_pending", "ok");
+    result["measurement_clock"] = Json("std::chrono::steady_clock/nanoseconds/v1");
+    result["measurement_scope"] = Json("pending-anchor-decode-and-synchronize/no-context-creation/v1");
+    result["claim_boundary"] = Json("isolated-exact-state-pending-token-profile/not-live-pcss/v1");
+    result["seed_id"] = Json(seed.seed_id);
+    result["warmup_repetitions"] = Json(static_cast<std::int64_t>(warmup_repetitions));
+    result["measurement_repetitions"] = Json(static_cast<std::int64_t>(measurement_repetitions));
+    result["prompt_state_sha256"] = Json(sha256_hex(prompt_state));
+    result["prompt_state_bytes"] = Json(static_cast<std::int64_t>(prompt_state.size()));
+    result["profiles"] = Json(std::move(profiles));
+    result["configuration"] = runtime_echo(config);
+    result["observed_context"] = observed_context(prompt);
+    result["state_export"] = Json(kStateExport);
+    result["state_api"] = Json(kStateApi);
+    result["generation_mode"] = Json("greedy_argmax");
+    result["greedy_tie_break"] = Json("lowest-token-id/v1");
+    result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
+    result["chat_template_applied"] = Json(false);
+    result["thinking_mode_applied"] = Json(false);
+    return {Json(std::move(result)), true};
+}
+
 HandledResponse handle_request(const Json & request, const char * expected_operation) {
     const Json::Object & object = as_object(request, "request");
     const std::string operation = required_string(object, "operation");
@@ -2011,6 +2205,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     }
     if (operation == "profile") {
         return profile(object);
+    }
+    if (operation == "profile_pending") {
+        return profile_pending(object);
     }
     throw BridgeError("invalid_request", "unsupported bridge operation");
 }
@@ -2037,7 +2234,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, or --pcss-profile"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
         );
     }
     const std::string argument(argv[1]);
@@ -2056,9 +2253,12 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-profile") {
         return "profile";
     }
+    if (argument == "--pcss-profile-pending") {
+        return "profile_pending";
+    }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, or --pcss-profile"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
     );
 }
 

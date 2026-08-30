@@ -129,6 +129,53 @@ def test_profile_response_is_exact_and_analysis_uses_paired_iterations(tmp_path:
     assert analysis["rows"][0]["paired_decode_ratio_ci"]["lower"] > 1.9
 
 
+def test_pending_profile_accounts_for_anchor_and_requires_its_contract(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    request = _request(
+        config,
+        seed_id="seed-1",
+        context=(1,),
+        k_values=(2,),
+        warmup_repetitions=1,
+        measurement_repetitions=2,
+        commit_protocol="pending_native",
+    )
+    response = _response(config)
+    response.update(
+        {
+            "schema_version": "pcss.llama-bridge-pending-profile/v1",
+            "operation": "profile_pending",
+            "measurement_scope": "pending-anchor-decode-and-synchronize/no-context-creation/v1",
+            "claim_boundary": "isolated-exact-state-pending-token-profile/not-live-pcss/v1",
+        }
+    )
+
+    assert request["operation"] == "profile_pending"
+    profiles = _validate_response(
+        response,
+        config=config,
+        seed_id="seed-1",
+        k_values=(2,),
+        warmup_repetitions=1,
+        measurement_repetitions=2,
+        commit_protocol="pending_native",
+    )
+    assert profiles[0]["k"] == 2
+
+    constrained = _config(tmp_path)
+    constrained.runtime["n_batch"] = 2
+    with pytest.raises(ContractError, match="n_batch"):
+        _request(
+            constrained,
+            seed_id="seed-1",
+            context=(1,),
+            k_values=(2,),
+            warmup_repetitions=1,
+            measurement_repetitions=2,
+            commit_protocol="pending_native",
+        )
+
+
 def test_profile_rejects_nonchronological_or_nonpositive_measurements(tmp_path: Path) -> None:
     config = _config(tmp_path)
     response = _response(config)
