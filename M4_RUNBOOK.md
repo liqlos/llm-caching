@@ -106,18 +106,31 @@ production decode integration or a general PCSS speedup claim.
   This causally supersedes the negative K=2 implementation result, but its claim
   remains controlled exact-repeat decode-only: provider lookup, prefill/restore,
   misses/rejections, and thermal sustainability are excluded.
-- A broader persistent exact-repeat ceiling then reproduced the K=2 benefit on
-  twelve independent visible Qwen3-8B outputs. The derived cross-session trace
-  is a `SIMULATOR` control, not new generation (trace SHA-256
-  `354818cf22da43cd2e4594afc21c470b4f9632da23629e3664f7a1a4684de12c`), and
-  the M4 decode receipt is `LOCAL_MEASURED CONTROLLED_LIVE_DECODE_POSITIVE`:
-  all twelve output/state comparisons exact, all 256 proposed tokens per case
-  accepted, zero checkpoints/reconstructions, paired ratio `1.077900`,
-  clustered 95% CI `[1.049214, 1.106023]` (raw SHA-256
-  `e0be4b0b6db49326a33fc46c7fa694d4dc3b8afc394765924979da64f13e25e6`).
-  This establishes only the decode-only ceiling after an exact persistent
-  archive hit is already available; it excludes lookup, provider, prefill,
-  restore, misses, and thermal effects.
+- An initial broad exact-repeat trace retained its source path identity, so it
+  classified as `current_source`; its raw M4 receipt
+  `e0be4b0b6db49326a33fc46c7fa694d4dc3b8afc394765924979da64f13e25e6`
+  remains valid static-candidate verifier evidence but is not persistent-tier
+  evidence. Revision `222aaa2c35202a5c2971374ff7b7485323887ddc` corrects the
+  derived target lineage by removing path-specific current-source identity while
+  retaining repository ancestry. The new 12-pair cross-session trace is a
+  `SIMULATOR` control, not new generation (trace SHA-256
+  `4c48eeacef254715870cced291e7df86826588f06a737282cc865a1cfd2e6203`).
+  Its exact-prompt shadow gate is future-token-free: it proposed on 576 of 1152
+  positions, accepted all 576 proposals / 1140 tokens, and abstained on the
+  other 576 (`raw/10-exact-prompt-shadow.json`, SHA-256
+  `79e4d77cb17921881143c9bb166d573191aa41d77137243b49fddbaa0de842f1`).
+  On the independent edited trace, the same gate abstained on all 1152 positions
+  rather than consuming verify budget (`raw/11-diverse-edit-exact-prompt-shadow.json`,
+  SHA-256 `e513591e6004066ba99a4bd34bd2f8093ebd721bf9ee0eab75d768c73002cbc7`).
+  The fresh target-bound M4 K=2 receipt is `LOCAL_MEASURED
+  CONTROLLED_LIVE_DECODE_POSITIVE`: all twelve output/state comparisons exact,
+  all 256 proposed tokens per case accepted, zero checkpoints/reconstructions,
+  paired ratio `1.077830`, clustered 95% CI `[1.048257, 1.106604]`
+  (`raw/61-persistent-exact-repeat-k2.json`, SHA-256
+  `6c0396e3ba40cfa4f5163c82a5c5929f2e362a003e777299fbc4a555257d9b1c`).
+  This is the decode-only ceiling after an exact persistent archive hit and
+  exact-prompt admission are available; it excludes lookup/provider execution,
+  prefill, restore, misses, and thermal effects.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
