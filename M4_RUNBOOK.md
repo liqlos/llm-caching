@@ -92,6 +92,20 @@ production decode integration or a general PCSS speedup claim.
   It supersedes neither the old K=2 receipt nor its narrow claim, but proves
   that the earlier positive decode-only result does not reproduce across the
   isolated llama.cpp build; neither receipt supports a portable K=2 claim.
+- Causal inspection found that this negative K=2 path serialized the full
+  10--12 MiB llama state before every two-token verification round even though
+  native tail trimming made that checkpoint unreachable. Revision
+  `587a628bf8a46847148863e9fd012951961727e6` removes only that unused work and
+  records checkpoint counts in the bridge receipt. The fresh immutable run at
+  `/Users/ai-server/Projects/pcss-artifacts/runs/k2-checkpoint-elision-587a628-20260830`
+  is output/state exact for all three cases, has zero checkpoint and zero serial
+  reconstruction rounds, and reports `CONTROLLED_LIVE_DECODE_POSITIVE`: paired
+  serial-over-candidate decode ratio `1.130962`, clustered 95% CI
+  `[1.128441, 1.133302]`. Raw SHA-256:
+  `25d222491717d7db077034b0787ce51b0a370361086b4aff34168145e2072949`.
+  This causally supersedes the negative K=2 implementation result, but its claim
+  remains controlled exact-repeat decode-only: provider lookup, prefill/restore,
+  misses/rejections, and thermal sustainability are excluded.
 - Current-source edit/re-anchor is a distinct but also negative controlled
   path on that exact backend. `raw/22-source-reanchor-live-k2.json` is
   output/state exact, but reports serial/candidate `0.903863`, clustered 95%
