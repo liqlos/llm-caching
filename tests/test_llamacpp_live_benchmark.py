@@ -169,3 +169,14 @@ def test_request_can_force_one_deterministic_rejection() -> None:
             config(), source, target, k=2, output_tokens=4, warmup_repetitions=0,
             measurement_repetitions=2, forced_rejection_position=4,
         )
+
+
+def test_request_accepts_a_prevalidated_archive_candidate() -> None:
+    source = record("source", chronological_index=1, session_id="one")
+    target = record("target", chronological_index=2, session_id="two")
+    request = _request(
+        config(), source, target, k=2, output_tokens=4, warmup_repetitions=0,
+        measurement_repetitions=2, candidate_tokens=(30, 31, 32, 33),
+    )
+
+    assert request["benchmark"]["candidate_tokens"] == [30, 31, 32, 33]

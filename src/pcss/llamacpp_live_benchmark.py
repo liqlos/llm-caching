@@ -103,9 +103,10 @@ def _request(
     measurement_repetitions: int,
     reanchor_min_tokens: int = 0,
     forced_rejection_position: int | None = None,
+    candidate_tokens: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     prompt = tuple(target["content"]["prompt_token_ids"])
-    candidate = list(source["content"]["committed_token_ids"])
+    candidate = list(source["content"]["committed_token_ids"] if candidate_tokens is None else candidate_tokens)
     if not prompt:
         raise ContractError("benchmark prompt token stream must not be empty")
     if k < 1 or k + 1 > config.runtime["n_batch"]:
