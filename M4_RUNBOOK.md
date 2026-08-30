@@ -106,6 +106,26 @@ production decode integration or a general PCSS speedup claim.
   This causally supersedes the negative K=2 implementation result, but its claim
   remains controlled exact-repeat decode-only: provider lookup, prefill/restore,
   misses/rejections, and thermal sustainability are excluded.
+- Revision `62901edd6b1fbd4f57860476a468245508514e3d` adds a deterministic,
+  trace-token-only forced-rejection profile: it replaces exactly one candidate
+  token while retaining the recorded target as the authority. On the corrected
+  K=2 backend, all three-case profiles remained exact output/state with zero
+  checkpoints and reconstructions. A rejection at position 0 was a clear loss,
+  `0.970760`, clustered 95% CI `[0.968429, 0.972161]` (raw SHA-256
+  `bd492104379c592514913c54220d00511859716fa340138150b0a3c6dc922917`);
+  positions 1 and 3 were also negative, respectively `0.990725`
+  `[0.988004, 0.993993]` and `0.976623` `[0.974464, 0.978489]` (raw SHA-256
+  `379983968c308a02d5f9fb53e0ae961956702faaf7fd55f6909172a5239453bb` and
+  `cb25f03c54268fc857e7785643c6e57c6c38e3bd410d2e2622447f9f0edde34c`).
+  Positions 7 and 31 were locally positive, respectively `1.005929`
+  `[1.004200, 1.007160]` and `1.008789` `[1.007192, 1.010979]` (raw SHA-256
+  `d0f699a1ebd1b8f49c5effd41a66e7918a34d63089db118434da4614930f26be` and
+  `f7d4ac7c856cb55928f75efcb69a1a78396ad44f726e9717f89686a22604de2c`).
+  Different profile runs had materially different paired baseline times, so
+  this is not a monotonic threshold or production-K selection. It does establish
+  the kill gate that zero-to-three-token accepted prefixes are unprofitable in
+  the measured decode-only regime; a shared-process repeatability profile is
+  still required before comparing positions or making policy claims.
 - Current-source edit/re-anchor is a distinct but also negative controlled
   path on that exact backend. `raw/22-source-reanchor-live-k2.json` is
   output/state exact, but reports serial/candidate `0.903863`, clustered 95%
