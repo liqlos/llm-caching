@@ -70,6 +70,9 @@ def test_protocol_bakeoff_keeps_patch_and_persistent_credit_separate(tmp_path: P
     assert case["patch"]["edited_output_tokens"] == 1
     assert receipt.evidence_class == "SIMULATOR"
     assert receipt.payload["runtime_claim"].startswith("none")
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Edit-protocol result" in report
+    assert "offline scoring only" in report
 
 
 def test_protocol_bakeoff_rejects_future_source(tmp_path: Path) -> None:

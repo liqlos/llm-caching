@@ -179,6 +179,27 @@ def _offline_replay_summary_lines(payload: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+def _protocol_bakeoff_summary_lines(payload: Mapping[str, Any]) -> list[str]:
+    """Render offline edit-protocol coverage without implying online generation."""
+
+    if payload.get("kind") != "chronological_edit_protocol_bakeoff":
+        return []
+    lines = [
+        "- Edit-protocol result (offline direct-output coverage):",
+        f"  - Paired cases: `{payload.get('case_count')}`; full-regeneration baseline tokens: `{payload.get('full_regeneration_baseline_tokens')}`",
+    ]
+    coverage = payload.get("direct_output_coverage_clustered_ci")
+    if isinstance(coverage, Mapping):
+        for protocol, interval in sorted(coverage.items()):
+            if not isinstance(interval, Mapping):
+                continue
+            lines.append(
+                f"  - `{protocol}`: `{interval.get('estimate', 0.0):.2%}` clustered coverage, 95% CI [`{interval.get('lower', 0.0):.2%}`, `{interval.get('upper', 0.0):.2%}`]"
+            )
+    lines.append("  - Boundary: offline scoring only; not an online proposer or speedup measurement.")
+    return lines
+
+
 def write_compact_report(path: Path, *, raw_result: Path, title: str) -> None:
     """Create a compact report only from an already-written raw result."""
     require_string(title, "report.title")
@@ -203,4 +224,5 @@ def write_compact_report(path: Path, *, raw_result: Path, title: str) -> None:
     payload = receipt["payload"]
     if isinstance(payload, Mapping):
         lines.extend(_offline_replay_summary_lines(payload))
+        lines.extend(_protocol_bakeoff_summary_lines(payload))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
