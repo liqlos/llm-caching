@@ -104,6 +104,7 @@ def _request(
     reanchor_min_tokens: int = 0,
     forced_rejection_position: int | None = None,
     candidate_tokens: Sequence[int] | None = None,
+    operation: str = "benchmark_pending",
 ) -> dict[str, Any]:
     prompt = tuple(target["content"]["prompt_token_ids"])
     candidate = list(source["content"]["committed_token_ids"] if candidate_tokens is None else candidate_tokens)
@@ -127,7 +128,7 @@ def _request(
         candidate[forced_rejection_position] = replacement
     return {
         "schema_version": REQUEST_SCHEMA_VERSION,
-        "operation": "benchmark_pending",
+        "operation": operation,
         "model_artifact": str(config.model_artifact),
         "llama_cpp_library": str(config.llama_cpp_library),
         "llama_cpp_revision": config.llama_cpp_revision,
@@ -147,8 +148,10 @@ def _request(
 
 def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, Any]:
     try:
+        operation = request.get("operation")
+        guard = "--pcss-live-pending" if operation == "live_pending" else "--pcss-benchmark-pending"
         completed = subprocess.run(
-            (str(config.bridge_executable), "--pcss-benchmark-pending"),
+            (str(config.bridge_executable), guard),
             input=canonical_json(request) + "\n",
             capture_output=True,
             check=False,
@@ -178,8 +181,11 @@ def _validate_response(
     require_exact_keys(response, _RESPONSE_FIELDS, "benchmark response")
     benchmark = request["benchmark"]
     expected = {
-        "schema_version": RESPONSE_SCHEMA_VERSION,
-        "operation": "benchmark_pending",
+        "schema_version": (
+            "pcss.llama-bridge-persistent-live/v1"
+            if request["operation"] == "live_pending" else RESPONSE_SCHEMA_VERSION
+        ),
+        "operation": request["operation"],
         "status": "ok",
         "backend": "llama.cpp",
         "case_id": benchmark["case_id"],
@@ -192,7 +198,11 @@ def _validate_response(
         "candidate_prefix_tokens": benchmark["candidate_tokens"][: benchmark["output_tokens"]],
         "exact_output_and_state": True,
         "measurement_clock": "std::chrono::steady_clock/nanoseconds/v1",
-        "measurement_scope": "decode-and-synchronize/prefill-restore-provider-excluded/v1",
+        "measurement_scope": (
+            "decode-and-synchronize/single-context/prefill-restore-provider-excluded/v1"
+            if request["operation"] == "live_pending"
+            else "decode-and-synchronize/prefill-restore-provider-excluded/v1"
+        ),
         "provider_integration": "static-trace-candidate/provider-lookup-excluded/v1",
         "state_export": "model-architecture+memory-state/v2",
         "state_api": "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2",
@@ -280,6 +290,7 @@ def run_live_benchmark(
     pair_mode: str = "exact_repeat",
     reanchor_min_tokens: int = 0,
     forced_rejection_position: int | None = None,
+    operation: str = "benchmark_pending",
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
@@ -312,6 +323,7 @@ def run_live_benchmark(
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
             reanchor_min_tokens=reanchor_min_tokens,
             forced_rejection_position=forced_rejection_position,
+            operation=operation,
         )
         response = _validate_response(
             bridge_runner(config, request), request, config,
@@ -348,7 +360,7 @@ def run_live_benchmark(
         },
         status=analysis["decision"],
         payload={
-            "kind": f"controlled_{experiment_kind}_pending_live_decode",
+            "kind": f"controlled_{experiment_kind}_{operation}_decode",
             "host_identity": host.as_dict(), "cases": cases, "analysis": analysis,
             "forced_rejection_position": forced_rejection_position,
             "runtime_claim": f"controlled {experiment_kind} decode-only A/B; provider lookup, prefill, and restore excluded; not general PCSS speedup",
@@ -376,6 +388,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pair-mode", choices=("exact_repeat", "source_reuse"), default="exact_repeat")
     parser.add_argument("--reanchor-min-tokens", type=int, default=0)
     parser.add_argument("--forced-rejection-position", type=int)
+    parser.add_argument("--operation", choices=("benchmark_pending", "live_pending"), default="benchmark_pending")
     return parser
 
 
@@ -391,6 +404,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pair_mode=parsed.pair_mode,
         reanchor_min_tokens=parsed.reanchor_min_tokens,
         forced_rejection_position=parsed.forced_rejection_position,
+        operation=parsed.operation,
     )
     return 0
 

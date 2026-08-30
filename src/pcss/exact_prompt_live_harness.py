@@ -156,6 +156,7 @@ def run_exact_prompt_live_harness(
             config, source, target, k=k, output_tokens=output_tokens,
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
             candidate_tokens=candidate,
+            operation="live_pending",
         )
         response = _validate_response(
             bridge_runner(config, request), request, config,
@@ -213,7 +214,7 @@ def run_exact_prompt_live_harness(
             "kind": "sealed_exact_prompt_archive_to_isolated_bridge_harness",
             "host_identity": host.as_dict(), "analysis": analysis, "cases": cases,
             "archive_byte_accounting": archive.archive.byte_accounting(),
-            "runtime_claim": "external sealed archive provider plus live bridge decode; hit and abstention lookup costs are inside the candidate clock, but this remains an isolated bridge harness rather than a llama.cpp provider hook",
+            "runtime_claim": "external sealed archive provider plus single-context live bridge decode; hit and abstention lookup costs are inside the candidate clock, but this remains an isolated bridge harness rather than a llama.cpp provider hook",
             "not_claimed": ["end_to_end_request_speedup", "representative_workload_speedup", "thermal_sustainability", "online_storage"],
         },
     )

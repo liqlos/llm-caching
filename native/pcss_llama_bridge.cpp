@@ -25,6 +25,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -43,6 +44,7 @@ constexpr const char * kPendingTrajectorySchema = "pcss.llama-bridge-pending-tra
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
 constexpr const char * kPendingBenchmarkSchema = "pcss.llama-bridge-pending-benchmark/v2";
+constexpr const char * kPersistentLiveSchema = "pcss.llama-bridge-persistent-live/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -1313,6 +1315,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("verify_pending"),
         Json("trajectory_pending"),
         Json("benchmark_pending"),
+        Json("live_pending"),
         Json("profile"),
         Json("profile_pending"),
     });
@@ -2461,7 +2464,11 @@ HandledResponse profile_pending(const Json::Object & request) {
     return {Json(std::move(result)), true};
 }
 
-HandledResponse benchmark_pending(const Json::Object & request) {
+HandledResponse benchmark_pending(
+    const Json::Object & request,
+    const char * operation = "benchmark_pending",
+    bool release_prompt_context = false
+) {
     require_exact_keys(
         request,
         {
@@ -2475,7 +2482,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
             "benchmark",
         }
     );
-    require_request_schema(request, "benchmark_pending");
+    require_request_schema(request, operation);
     const RequestConfig config = parse_config(request);
     const SeedSpec seed = parse_seed(request, false);
     const Json::Object & benchmark = as_object(required_field(request, "benchmark"), "benchmark");
@@ -2518,11 +2525,24 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         seed.initial_context_tokens.begin(),
         seed.initial_context_tokens.end() - 1
     );
-    Context prompt = runtime.make_context();
-    if (!prefix_tokens.empty()) {
-        decode_tokens(prompt, prefix_tokens, 0U, false);
+    // `live_pending` deliberately releases the prefill context before creating
+    // the sole timed context.  The older benchmark operation retains its
+    // historical layout so its failed receipt remains immutable and distinct.
+    std::optional<Context> retained_prompt;
+    std::vector<std::uint8_t> prompt_state;
+    if (release_prompt_context) {
+        Context prompt = runtime.make_context();
+        if (!prefix_tokens.empty()) {
+            decode_tokens(prompt, prefix_tokens, 0U, false);
+        }
+        prompt_state = snapshot_state(prompt);
+    } else {
+        retained_prompt.emplace(runtime.make_context());
+        if (!prefix_tokens.empty()) {
+            decode_tokens(*retained_prompt, prefix_tokens, 0U, false);
+        }
+        prompt_state = snapshot_state(*retained_prompt);
     }
-    const std::vector<std::uint8_t> prompt_state = snapshot_state(prompt);
 
     struct DecodeRun {
         std::vector<llama_token> emitted;
@@ -2729,7 +2749,11 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         measurements.emplace_back(Json(std::move(row)));
     }
 
-    Json::Object result = result_base(kPendingBenchmarkSchema, "benchmark_pending", "ok");
+    Json::Object result = result_base(
+        release_prompt_context ? kPersistentLiveSchema : kPendingBenchmarkSchema,
+        operation,
+        "ok"
+    );
     result["case_id"] = Json(case_id);
     result["seed_id"] = Json(seed.seed_id);
     result["k"] = Json(static_cast<std::int64_t>(k));
@@ -2747,7 +2771,11 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     result["final_state_bytes"] = Json(static_cast<std::int64_t>(authoritative_state.size()));
     result["measurements"] = Json(std::move(measurements));
     result["measurement_clock"] = Json("std::chrono::steady_clock/nanoseconds/v1");
-    result["measurement_scope"] = Json("decode-and-synchronize/prefill-restore-provider-excluded/v1");
+    result["measurement_scope"] = Json(
+        release_prompt_context
+            ? "decode-and-synchronize/single-context/prefill-restore-provider-excluded/v1"
+            : "decode-and-synchronize/prefill-restore-provider-excluded/v1"
+    );
     result["provider_integration"] = Json("static-trace-candidate/provider-lookup-excluded/v1");
     result["exact_output_and_state"] = Json(true);
     result["configuration"] = runtime_echo(config);
@@ -2796,6 +2824,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     if (operation == "benchmark_pending") {
         return benchmark_pending(object);
     }
+    if (operation == "live_pending") {
+        return benchmark_pending(object, "live_pending", true);
+    }
     throw BridgeError("invalid_request", "unsupported bridge operation");
 }
 
@@ -2821,7 +2852,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, or --pcss-benchmark-pending"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, --pcss-benchmark-pending, or --pcss-live-pending"
         );
     }
     const std::string argument(argv[1]);
@@ -2852,9 +2883,12 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-benchmark-pending") {
         return "benchmark_pending";
     }
+    if (argument == "--pcss-live-pending") {
+        return "live_pending";
+    }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, or --pcss-benchmark-pending"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, --pcss-profile-pending, --pcss-benchmark-pending, or --pcss-live-pending"
     );
 }
 
