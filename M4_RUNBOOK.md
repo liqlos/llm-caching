@@ -7,6 +7,16 @@ production decode integration or a general PCSS speedup claim.
 
 ## Current status
 
+- The process-isolated pending live-decode family is a target-specific M4
+  `NO_GO`: `benchmark_pending`, `live_pending`, and
+  `single_context_live_pending` each exited after `ggml_metal_device_init` and
+  before returning JSON on Qwen3-8B Q4_K_M.  The final single-context receipt
+  root is `/Users/ai-server/Projects/pcss-artifacts/runs/single-context-live-e1b3e5f7cbaa-20260830/`.
+  No timing, output/state comparison, confidence interval, or speedup claim
+  was produced. Do not retry this operation family; the next design must keep
+  a native model/context alive across the workload and derive from the working
+  `trajectory_pending` protocol.
+
 - Host discovery found mac2-llm.local as Mac16,8, machine name MacBook Pro,
   with an Apple M4 Pro and 24 GiB unified memory. That discovery is not a
   verifier receipt.
