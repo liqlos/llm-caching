@@ -773,16 +773,7 @@ class LlamaCppBridgeAdapter:
         }
         if "runtime_configuration_fingerprint" in getattr(TargetAdapterBinding, "__dataclass_fields__", {}):
             values["schema_version"] = "pcss.verifier-adapter-binding/v2"
-            values["runtime_configuration_fingerprint"] = (
-                prepared.config.runtime_configuration_fingerprint
-                if self._commit_protocol == "serial"
-                else sha256(
-                    {
-                        "runtime_configuration_fingerprint": prepared.config.runtime_configuration_fingerprint,
-                        "commit_protocol": self._commit_protocol,
-                    }
-                )
-            )
+            values["runtime_configuration_fingerprint"] = prepared.config.runtime_configuration_fingerprint
         return TargetAdapterBinding(**values)
 
     def verify(self, case: VerifierCase) -> AdapterOutcome:
