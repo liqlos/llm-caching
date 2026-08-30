@@ -159,8 +159,8 @@ def build_trace_archive(
         status="EXACT_PROMPT_ARCHIVE_BUILT",
         payload={
             "kind": "immutable_exact_prompt_archive/v1",
-            "archive_manifest_sha256": file_sha256(archive_root / "manifest.json"),
-            "archive_byte_accounting": archive.byte_accounting,
+            "archive_manifest_sha256": file_sha256(archive_root / "archive-manifest.json"),
+            "archive_byte_accounting": archive.archive.byte_accounting(),
             "record_count": len(record_ids),
             "not_claimed": ["runtime_speedup", "online_append", "production_storage"],
         },
