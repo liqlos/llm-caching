@@ -55,6 +55,7 @@ def response_for(request: dict) -> dict:
             "accepted_tokens": 3,
             "verification_rounds": 2,
             "serial_fallback_steps": 1,
+            "state_checkpoint_rounds": 0,
             "serial_state_reconstruction_rounds": 0,
             "reanchor_attempts": 1,
             "reanchor_successes": 1,
@@ -62,7 +63,7 @@ def response_for(request: dict) -> dict:
         for index in range(benchmark["measurement_repetitions"])
     ]
     return {
-        "schema_version": "pcss.llama-bridge-pending-benchmark/v1",
+        "schema_version": "pcss.llama-bridge-pending-benchmark/v2",
         "operation": "benchmark_pending",
         "status": "ok",
         "backend": "llama.cpp",
@@ -126,6 +127,20 @@ def test_response_contract_accepts_only_exact_target_output_and_state() -> None:
 
     response["authoritative_tokens"][-1] = 99
     with pytest.raises(ContractError, match="recorded target trace"):
+        _validate_response(response, request, config())
+
+
+def test_response_contract_rejects_k2_state_checkpointing() -> None:
+    source = record("source", chronological_index=1, session_id="one")
+    target = record("target", chronological_index=2, session_id="two")
+    request = _request(
+        config(), source, target, k=2, output_tokens=4, warmup_repetitions=1, measurement_repetitions=2
+    )
+    response = response_for(request)
+    response["measurements"][0]["state_checkpoint_rounds"] = 1
+    response["measurements"][0]["serial_state_reconstruction_rounds"] = 1
+
+    with pytest.raises(ContractError, match="unexpectedly checkpointed"):
         _validate_response(response, request, config())
 
 

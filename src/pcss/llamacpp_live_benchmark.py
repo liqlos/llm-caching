@@ -35,7 +35,7 @@ from .verifier_runner import observe_target_host
 
 
 REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
-RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-pending-benchmark/v1"
+RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-pending-benchmark/v2"
 _RESPONSE_FIELDS = {
     "schema_version", "operation", "status", "backend", "case_id", "seed_id", "k",
     "output_tokens", "warmup_repetitions", "measurement_repetitions", "authoritative_tokens",
@@ -49,7 +49,7 @@ _RESPONSE_FIELDS = {
 _MEASUREMENT_FIELDS = {
     "iteration", "serial_before_ns", "candidate_decode_ns", "serial_after_ns", "proposed_tokens",
     "accepted_tokens", "verification_rounds", "serial_fallback_steps",
-    "serial_state_reconstruction_rounds",
+    "state_checkpoint_rounds", "serial_state_reconstruction_rounds",
     "reanchor_attempts", "reanchor_successes",
 }
 _FINGERPRINT_FIELDS = (
@@ -236,12 +236,16 @@ def _validate_response(
             _positive_int(row[field], f"benchmark measurement.{field}")
         for field in (
             "proposed_tokens", "accepted_tokens", "verification_rounds", "serial_fallback_steps",
-            "serial_state_reconstruction_rounds",
+            "state_checkpoint_rounds", "serial_state_reconstruction_rounds",
             "reanchor_attempts", "reanchor_successes",
         ):
             require_int(row[field], f"benchmark measurement.{field}", minimum=0)
         if row["accepted_tokens"] > row["proposed_tokens"]:
             raise ContractError("benchmark accepted more tokens than it proposed")
+        if row["state_checkpoint_rounds"] != row["serial_state_reconstruction_rounds"]:
+            raise ContractError("benchmark checkpoint and reconstruction counts disagree")
+        if response["k"] <= 2 and row["state_checkpoint_rounds"] != 0:
+            raise ContractError("native-tail-trim benchmark unexpectedly checkpointed state")
         if row["reanchor_successes"] > row["reanchor_attempts"]:
             raise ContractError("benchmark has more re-anchor successes than attempts")
         normalized.append(dict(row))

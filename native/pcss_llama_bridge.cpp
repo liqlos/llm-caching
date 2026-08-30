@@ -42,7 +42,7 @@ constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/
 constexpr const char * kPendingTrajectorySchema = "pcss.llama-bridge-pending-trajectory/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
-constexpr const char * kPendingBenchmarkSchema = "pcss.llama-bridge-pending-benchmark/v1";
+constexpr const char * kPendingBenchmarkSchema = "pcss.llama-bridge-pending-benchmark/v2";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -2468,6 +2468,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         std::size_t accepted = 0U;
         std::size_t verification_rounds = 0U;
         std::size_t serial_fallback_steps = 0U;
+        std::size_t state_checkpoint_rounds = 0U;
         std::size_t serial_state_reconstruction_rounds = 0U;
         std::size_t reanchor_attempts = 0U;
         std::size_t reanchor_successes = 0U;
@@ -2540,7 +2541,11 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                     candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor),
                     candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor + draft_count)
                 );
-                const std::vector<std::uint8_t> pre_verification_state = snapshot_state(context);
+                std::vector<std::uint8_t> pre_verification_state;
+                if (batch.size() > 3U) {
+                    pre_verification_state = snapshot_state(context);
+                    ++run.state_checkpoint_rounds;
+                }
                 decode_one_batch_with_all_logits(context, batch, committed_size);
                 std::vector<llama_token> targets;
                 targets.reserve(batch.size());
@@ -2648,6 +2653,9 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         row["accepted_tokens"] = Json(static_cast<std::int64_t>(speculative.accepted));
         row["verification_rounds"] = Json(static_cast<std::int64_t>(speculative.verification_rounds));
         row["serial_fallback_steps"] = Json(static_cast<std::int64_t>(speculative.serial_fallback_steps));
+        row["state_checkpoint_rounds"] = Json(
+            static_cast<std::int64_t>(speculative.state_checkpoint_rounds)
+        );
         row["serial_state_reconstruction_rounds"] = Json(
             static_cast<std::int64_t>(speculative.serial_state_reconstruction_rounds)
         );
