@@ -115,6 +115,17 @@ production decode integration or a general PCSS speedup claim.
   Across eight repetitions per three edit cases it attempted 108 re-anchors
   and succeeded twice. The result does not justify tuning the re-anchor
   threshold or claiming benefit from source reuse.
+- The checkpoint-elision run repeated that edited-source comparison on the
+  corrected K=2 path. Four-token re-anchor remained inconclusive at `1.018267`,
+  clustered 95% CI `[0.991027, 1.049227]`, despite exact output/state; its raw
+  SHA-256 is `54d95c61d1bdab280df16417ef6474021a64072f2ebbd741d06eb06214d68dd5`.
+  The predeclared no-re-anchor control on the same cases was exact and measured
+  `1.031866`, clustered 95% CI `[1.013632, 1.051853]` (raw SHA-256
+  `8acaaf2fb9fe3c5deda3dfaa55828918324767c450ba10926d768eb90e124f2a`).
+  Therefore bounded source reuse until the first mismatch is the current
+  controlled edit-path result; repeated re-anchor is disabled as an
+  unprofitable widening step until independent trace families justify revisiting
+  it. Both receipts exclude provider lookup, prefill/restore, and thermal claims.
 - The controlled exact-repeat live run at
   `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
   revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
