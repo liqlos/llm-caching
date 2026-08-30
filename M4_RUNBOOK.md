@@ -192,6 +192,20 @@ production decode integration or a general PCSS speedup claim.
   SHA-256 `44861e65973728b42de0bc565eef66641a94e305dbd1f9ff627f054793410970`).
   This is `SIMULATOR EXACT_PROMPT_CHAIN_VERIFIED_OFFLINE` post-hoc chain
   evidence; it does not invoke target decoding or establish any timing claim.
+- A stronger closed-loop experiment exposed a separate state-continuity kill
+  gate. The roundtrip harness takes each provider K=2 proposal into native
+  `verify_pending`, feeds its actual committed/bonus tokens back to the provider,
+  and starts the next isolated round by re-prefilling `prompt || committed`.
+  The `port` positive-control completed 16 native rounds / 48 output tokens,
+  but the independent `slug` case failed at round 6: archive token `25249`
+  versus native token `40691` after the same committed prefix. The failure is
+  durable: `LOCAL_MEASURED EXACT_PROMPT_PROVIDER_ROUNDTRIP_FAILED`, raw SHA-256
+  `c0850290083c04863c0ea0657e91164b613871269d64b964cf6fd039cc8e6268`
+  (`raw/00-slug-roundtrip.json`). Therefore re-prefilling a fresh native context
+  from visible token IDs is not an equivalent replacement for continuous pending
+  state on this Qwen/llama.cpp path. Do not continue the all-case roundtrip or
+  attach this reseed design to live decode; it does not invalidate the separate
+  continuous-state bridge harness or offline provider-chain result.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
