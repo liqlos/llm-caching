@@ -193,6 +193,36 @@ production decode integration or a general PCSS speedup claim.
   and
   `/Users/ai-server/Projects/pcss-artifacts/runs/capacity-ci-source-edit-89ec9f8-20260830/raw/capacity-ci.raw.json`
   (SHA-256 `a39e3d77050bab6c592fa89239f6553d2af9e0f5f29f2f0b6fc8eefea200e378`).
+- A larger, distinct Qwen3-8B edit corpus at revision
+  `71c72509895ca1b595f8fe6cdf0ed1aeddd0e7f4` now supplies 24 real target
+  traces (12 chronological source-to-edited-target pairs, 1,152 proposal
+  positions) with hidden reasoning excluded. The generation receipt is
+  `LOCAL_MEASURED TRACE_WORKLOAD_GENERATED`, while its two analyses are
+  `SIMULATOR VERIFIED_OFFLINE`: `raw/10-offline-replay.json` (SHA-256
+  `c71a693ac146d8506ce8b1e80fb7e703212c19428674429412310438d2cfdb00`) and
+  `raw/11-protocol-bakeoff.json` (SHA-256
+  `afd808cbfe3fb5589a1b4e59f33817d1ae52622631e081b29fdb0dcb0325cdc8`), all
+  under
+  `/Users/ai-server/Projects/pcss-artifacts/runs/diverse-edit-traces-71c7250-20260830`.
+  Its 12 clustered edit pairs give direct-output coverage of 56.60% for the
+  patch representation (95% CI 39.93–71.70%), 51.74% for current-source
+  reuse/re-anchor (34.03–67.71%), and 0% for persistent cross-session PCSS.
+  Persistent history therefore receives no incremental credit on this corpus.
+  This remains offline scoring, not an online patch proposer or a speedup
+  result.
+- The same larger corpus rules out selecting an eviction policy or capacity
+  from the simulator. At 384 and 768 logical bytes the fixed one-epoch recency
+  control captured more oracle-valued persistent tokens than historical
+  value-density (24.30% versus 0.05%, then 46.77% versus 32.28%); at 3072
+  bytes value-density was higher (89.51% versus 82.72%), but their 20-request
+  clustered intervals overlap. At identical 4096-byte/two-probe scope budgets,
+  bounded widening added 64 selected oracle tokens over repository isolation
+  (4133 versus 3981) but selected 362 zero-accept candidates versus 84; global
+  selection likewise had 365 zero-accept candidates. No policy, capacity knee,
+  widening rule, consensus threshold, or negative-evidence runtime suppression
+  is authorized from it. In particular, 0 of 722 candidate opportunities had
+  two independent provenance families; the simulator observed just one prior
+  suppression and performed no runtime suppression.
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
