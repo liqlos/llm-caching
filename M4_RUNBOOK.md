@@ -44,6 +44,14 @@ one fixed Qwen3-8B GGUF configuration. It does not attach PCSS to live decoding.
   K={1,2,4,8,16,32}, with two warmups and eight paired measurement clusters.
   Every paired serial baseline passed the predeclared 5% repeatability gate.
   The decode-only ratio is not a live-PCSS or end-to-end speedup result.
+- A separate provider-ABI-only run at
+  /Users/ai-server/Projects/pcss-artifacts/runs/provider-abi-121c139 used
+  revision 121c139b5a9aadddf73031183ee69787861cc6b0. Its raw receipt SHA-256 is
+  5688cd4c96a0c991d2fabd3fad8003b1299f3e2049c3934efc976fb4eb465cf1.
+  Across 20 whole-block clusters of 1,000 calls, the net per-call 95% CIs were
+  1.150–1.274 microseconds for no-op, 0.882–0.896 microseconds for always-miss,
+  and 2.462–2.472 microseconds for deterministic shadow-hit. This is a Python
+  ABI microprofile, not a live-decode overhead result.
 - Do not stop, restart, reconfigure, or share resources with the existing
   persona-rag sidecar. PCSS runs only from the dedicated paths below.
 
@@ -428,6 +436,24 @@ serial-after duration, plus restore and snapshot timings. Context creation and
 prompt prefill are outside the timed decode region. Treat
 BASELINE_REPEATABILITY_FAILED as a kill gate. PROFILE_VALID only validates the
 receipt and repeatability; it does not select K or establish profitability.
+
+The provider ABI microprofile is a separate committed run because it does not
+load the model or modify the verifier bridge:
+
+~~~sh
+"$PCSS_PYTHON" -m pcss.provider_profiler \
+  --manifest "$PCSS_MANIFEST" \
+  --output "$PCSS_RUN_ROOT/raw/30-provider-abi-profile.json" \
+  --report "$PCSS_RUN_ROOT/reports/30-provider-abi-profile.md" \
+  --repository-root "$PCSS_REPO" \
+  --blocks 20 \
+  --calls-per-block 1000 \
+  --warmup-calls 100
+~~~
+
+It records empty-call controls both before and after each provider block and
+bootstraps whole blocks. Do not substitute its microsecond result for a shadow
+provider attached to real target generation.
 
 The actual e71fa7e951be run has exactly these durable artifacts; reports exist
 only after their matching raw artifact:
