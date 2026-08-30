@@ -17,9 +17,22 @@ def test_exact_prompt_profile_reads_only_the_bound_cursor(tmp_path: Path) -> Non
     source, target = derive_exact_repeat_records([source])
     archive = build_exact_prompt_archive(tmp_path / "archive", [source])
 
-    row = _profile_request(archive, target, k=2, calls=3, warmup_calls=1)
+    row = _profile_request(archive, target, k=2, calls=3, warmup_calls=1, expect_hit=True)
 
     assert row["record_id"] == target["record_id"]
     assert row["hit_count"] == 1
     assert row["candidate_tokens"] == target["content"]["committed_token_ids"][:2]
     assert row["lookup_and_cursor_ns_per_call"] > 0
+
+
+def test_exact_prompt_profile_requires_an_empty_miss_control(tmp_path: Path) -> None:
+    source = json.loads((ROOT / "fixtures/replay/chronological-oracle-v1.json").read_text(encoding="utf-8"))[0]
+    source["content"]["prompt_token_ids"] = [90, 91, 92, 93]
+    source, target = derive_exact_repeat_records([source])
+    target["content"]["prompt_token_ids"] = [94, 91, 92, 93]
+    archive = build_exact_prompt_archive(tmp_path / "archive", [source])
+
+    row = _profile_request(archive, target, k=2, calls=3, warmup_calls=1, expect_hit=False)
+
+    assert row["hit_count"] == 0
+    assert row["candidate_tokens"] == []

@@ -42,18 +42,24 @@ def _profile_request(
     k: int,
     calls: int,
     warmup_calls: int,
+    expect_hit: bool,
 ) -> dict[str, Any]:
     prompt = _tokens(record, "prompt_token_ids")
     expected = _tokens(record, "committed_token_ids")[:k]
     if len(expected) != k:
         raise ContractError("profile target has fewer committed tokens than k")
     hits = archive.lookup(prompt)
-    if len(hits) != 1 or hits[0].cursor.read(k) != expected:
-        raise ContractError("exact-prompt archive did not produce one exact continuation")
+    if expect_hit:
+        if len(hits) != 1 or hits[0].cursor.read(k) != expected:
+            raise ContractError("exact-prompt archive did not produce one exact continuation")
+    elif hits:
+        raise ContractError("exact-prompt archive miss control unexpectedly found a candidate")
     for _ in range(warmup_calls):
         warm = archive.lookup(prompt)
-        if len(warm) != 1 or warm[0].cursor.read(k) != expected:
+        if expect_hit and (len(warm) != 1 or warm[0].cursor.read(k) != expected):
             raise ContractError("exact-prompt archive warmup changed its exact continuation")
+        if not expect_hit and warm:
+            raise ContractError("exact-prompt archive warmup miss found a candidate")
 
     def control() -> int:
         started = perf_counter_ns()
@@ -65,8 +71,10 @@ def _profile_request(
     started = perf_counter_ns()
     for _ in range(calls):
         hit = archive.lookup(prompt)
-        if len(hit) != 1 or hit[0].cursor.read(k) != expected:
+        if expect_hit and (len(hit) != 1 or hit[0].cursor.read(k) != expected):
             raise ContractError("exact-prompt archive changed continuation during measurement")
+        if not expect_hit and hit:
+            raise ContractError("exact-prompt archive miss found a candidate during measurement")
     lookup_ns = perf_counter_ns() - started
     after = control()
     paired_control = (before + after) / 2.0
@@ -74,8 +82,8 @@ def _profile_request(
         "record_id": record["record_id"],
         "calls": calls,
         "warmup_calls": warmup_calls,
-        "hit_count": 1,
-        "candidate_tokens": list(expected),
+        "hit_count": 1 if expect_hit else 0,
+        "candidate_tokens": list(expected) if expect_hit else [],
         "control_before_ns_per_call": before / calls,
         "control_after_ns_per_call": after / calls,
         "paired_control_ns_per_call": paired_control / calls,
@@ -97,6 +105,7 @@ def run_exact_prompt_profile(
     k: int,
     calls: int,
     warmup_calls: int,
+    expect_hit: bool = True,
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
 ) -> ResultReceipt:
     if k < 1 or calls < 1 or warmup_calls < 0:
@@ -115,7 +124,9 @@ def run_exact_prompt_profile(
         raise ContractError(f"profile target record is absent: {missing[0]!r}")
     archive = open_exact_prompt_archive(archive_root)
     rows = [
-        _profile_request(archive, by_id[record_id], k=k, calls=calls, warmup_calls=warmup_calls)
+        _profile_request(
+            archive, by_id[record_id], k=k, calls=calls, warmup_calls=warmup_calls, expect_hit=expect_hit
+        )
         for record_id in target_record_ids
     ]
     clusters = {row["record_id"]: (float(row["net_lookup_and_cursor_ns_per_call"]),) for row in rows}
@@ -134,6 +145,7 @@ def run_exact_prompt_profile(
             "kind": "immutable_exact_prompt_lookup_microprofile",
             "host_identity": host.as_dict(),
             "k": k,
+            "expect_hit": expect_hit,
             "rows": rows,
             "net_lookup_and_cursor_ci_ns_per_call": {
                 "estimate": interval.estimate,
@@ -163,6 +175,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--k", type=int, default=2)
     parser.add_argument("--calls", type=int, default=1_000)
     parser.add_argument("--warmup-calls", type=int, default=100)
+    parser.add_argument("--expect-miss", action="store_true")
     return parser
 
 
@@ -181,6 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         k=parsed.k,
         calls=parsed.calls,
         warmup_calls=parsed.warmup_calls,
+        expect_hit=not parsed.expect_miss,
     )
     return 0
 
