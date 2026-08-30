@@ -125,6 +125,14 @@ def _run_pair(config: BridgeConfig, archive, source: Mapping[str, Any], target: 
         round_committed, accepted, state = _validate_round(response, proposal)
         if len(committed) + len(round_committed) > output_tokens:
             raise ContractError("native pending verifier committed beyond the requested output boundary")
+        archive_expected = archive.archive.read_tokens(
+            source["record_id"], len(prompt) + len(committed), len(round_committed)
+        )
+        if archive_expected != round_committed:
+            raise ContractError(
+                f"native committed tokens diverge from archive at round {len(rounds)}: "
+                f"archive={archive_expected!r} native={round_committed!r}"
+            )
         feedback_status = "all_accepted" if accepted == len(proposal.tokens) else "rejected"
         provider.feedback(
             request_context.request_id,
