@@ -1880,14 +1880,28 @@ HandledResponse trajectory_pending(const Json::Object & request) {
 
     for (std::size_t round_index = 0; round_index < round_specs.size(); ++round_index) {
         const Json::Object & round = as_object(round_specs[round_index], "trajectory.rounds[]");
-        require_exact_keys(round, {"mode", "rejection_position"});
-        const std::string mode = required_string(round, "mode");
-        const std::int64_t rejection_position = required_integer(round, "rejection_position");
-        const bool full_accept = mode == "full_accept";
-        if ((!full_accept && mode != "reject") ||
-            (full_accept && rejection_position != -1) ||
-            (!full_accept && (rejection_position < 0 || static_cast<std::size_t>(rejection_position) >= k))) {
-            throw BridgeError("invalid_request", "trajectory round mode/rejection_position is invalid");
+        const bool external_draft = round.find("draft_tokens") != round.end();
+        std::string mode;
+        std::int64_t rejection_position = -1;
+        bool full_accept = false;
+        std::vector<llama_token> externally_supplied_draft;
+        if (external_draft) {
+            require_exact_keys(round, {"draft_tokens"});
+            mode = "external_draft";
+            externally_supplied_draft = required_tokens(round, "draft_tokens");
+            if (externally_supplied_draft.size() != k) {
+                throw BridgeError("invalid_request", "external trajectory draft must have exactly k tokens");
+            }
+        } else {
+            require_exact_keys(round, {"mode", "rejection_position"});
+            mode = required_string(round, "mode");
+            rejection_position = required_integer(round, "rejection_position");
+            full_accept = mode == "full_accept";
+            if ((!full_accept && mode != "reject") ||
+                (full_accept && rejection_position != -1) ||
+                (!full_accept && (rejection_position < 0 || static_cast<std::size_t>(rejection_position) >= k))) {
+                throw BridgeError("invalid_request", "trajectory round mode/rejection_position is invalid");
+            }
         }
 
         const std::vector<std::uint8_t> round_start_state = snapshot_state(reference);
@@ -1901,10 +1915,10 @@ HandledResponse trajectory_pending(const Json::Object & request) {
             runtime.vocabulary_size()
         );
         const llama_token bonus_token = greedy_argmax(oracle, runtime.vocabulary_size());
-        std::vector<llama_token> draft_tokens = target_tokens;
-        std::size_t accepted = k;
+        std::vector<llama_token> draft_tokens = external_draft ? externally_supplied_draft : target_tokens;
+        std::size_t accepted = external_draft ? 0U : k;
         llama_token next_pending = bonus_token;
-        if (!full_accept) {
+        if (!external_draft && !full_accept) {
             accepted = static_cast<std::size_t>(rejection_position);
             if (runtime.vocabulary_size() < 2) {
                 throw BridgeError("invalid_request", "forced rejection requires at least two vocabulary tokens");
@@ -1915,14 +1929,16 @@ HandledResponse trajectory_pending(const Json::Object & request) {
             next_pending = target_tokens[accepted];
         }
 
-        decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
-        for (std::size_t index = 0; index < accepted; ++index) {
-            decode_tokens(
-                reference,
-                std::vector<llama_token>{target_tokens[index]},
-                committed_size + 1U + index,
-                true
-            );
+        if (!external_draft) {
+            decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
+            for (std::size_t index = 0; index < accepted; ++index) {
+                decode_tokens(
+                    reference,
+                    std::vector<llama_token>{target_tokens[index]},
+                    committed_size + 1U + index,
+                    true
+                );
+            }
         }
         std::vector<llama_token> verification_batch;
         verification_batch.reserve(k + 1U);
@@ -1930,6 +1946,39 @@ HandledResponse trajectory_pending(const Json::Object & request) {
         verification_batch.insert(verification_batch.end(), draft_tokens.begin(), draft_tokens.end());
         decode_one_batch_with_all_logits(verifier, verification_batch, committed_size);
         llama_synchronize(verifier.raw());
+        bool verification_targets_match = true;
+        if (external_draft) {
+            std::vector<llama_token> verification_tokens;
+            verification_tokens.reserve(k + 1U);
+            for (std::size_t index = 0; index < k + 1U; ++index) {
+                const llama_token token = greedy_argmax_at(
+                    verifier, runtime.vocabulary_size(), static_cast<std::int32_t>(index)
+                );
+                verification_tokens.push_back(token);
+                const llama_token expected = index < k ? target_tokens[index] : bonus_token;
+                if (token != expected) {
+                    verification_targets_match = false;
+                }
+            }
+            while (accepted < k && draft_tokens[accepted] == verification_tokens[accepted]) {
+                ++accepted;
+            }
+            if (accepted < k) {
+                rejection_position = static_cast<std::int64_t>(accepted);
+                next_pending = verification_tokens[accepted];
+            } else {
+                next_pending = verification_tokens[k];
+            }
+            decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
+            for (std::size_t index = 0; index < accepted; ++index) {
+                decode_tokens(
+                    reference,
+                    std::vector<llama_token>{target_tokens[index]},
+                    committed_size + 1U + index,
+                    true
+                );
+            }
+        }
         const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
         const bool tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
         if (!tail_trimmed) {
@@ -1946,12 +1995,13 @@ HandledResponse trajectory_pending(const Json::Object & request) {
         round_result["accepted_draft_tokens"] = Json(static_cast<std::int64_t>(accepted));
         round_result["pending_token"] = Json(static_cast<std::int64_t>(next_pending));
         round_result["tail_trimmed"] = Json(tail_trimmed);
+        round_result["verification_targets_match"] = Json(verification_targets_match);
         round_result["state_matches"] = Json(state_matches);
         round_result["verifier_state_sha256"] = Json(sha256_hex(verifier_state));
         round_result["reference_state_sha256"] = Json(sha256_hex(reference_state));
         round_result["state_bytes"] = Json(static_cast<std::int64_t>(verifier_state.size()));
         round_results.emplace_back(Json(std::move(round_result)));
-        if (!state_matches) {
+        if (!state_matches || !verification_targets_match) {
             all_rounds_match = false;
             break;
         }
