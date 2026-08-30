@@ -14,8 +14,12 @@ if(CMAKE_DL_LIBS)
     target_link_libraries(pcss_llama_bridge PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
-# Prefer an exported CMake package when the installed llama.cpp provides one.
-find_package(llama CONFIG QUIET)
+# Prefer an exported CMake package only when callers have not pinned a
+# dedicated llama.cpp prefix. A globally discoverable Homebrew package must not
+# override an explicit verifier artifact root.
+if(NOT LLAMA_CPP_ROOT)
+    find_package(llama CONFIG QUIET)
+endif()
 
 if(TARGET llama::llama)
     target_link_libraries(pcss_llama_bridge PRIVATE llama::llama)
