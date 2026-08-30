@@ -2595,6 +2595,11 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     result["observed_context"] = observed_context(candidate);
     result["state_export"] = Json(kStateExport);
     result["state_api"] = Json(kStateApi);
+    result["generation_mode"] = Json("greedy_argmax");
+    result["greedy_tie_break"] = Json("lowest-token-id/v1");
+    result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
+    result["chat_template_applied"] = Json(false);
+    result["thinking_mode_applied"] = Json(false);
     result["claim_boundary"] = Json("controlled-static-candidate-live-decode/not-general-pcss/v1");
     return {Json(std::move(result)), true};
 }
