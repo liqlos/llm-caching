@@ -184,6 +184,14 @@ production decode integration or a general PCSS speedup claim.
   `2499d118926e8e35309a59022059750233f5ebbdbe9d0b1df19c698afd5d3c3e`).
   This proves ABI lifecycle through the external archive-to-isolated-bridge
   harness only; no llama.cpp provider hook or production decode path exists.
+- The provider's chain-state transition was separately replayed against the
+  same sealed archive and 12 model-generated exact-repeat streams. At K=2 it
+  completed all 48 authoritative tokens in every case: 192 total proposal /
+  feedback rounds, 16 all-accepted rounds per request, one begin/end lifecycle
+  pair per request, and no future-token retrieval (`raw/10-provider-chain-shadow.json`,
+  SHA-256 `44861e65973728b42de0bc565eef66641a94e305dbd1f9ff627f054793410970`).
+  This is `SIMULATOR EXACT_PROMPT_CHAIN_VERIFIED_OFFLINE` post-hoc chain
+  evidence; it does not invoke target decoding or establish any timing claim.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
