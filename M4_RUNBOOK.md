@@ -114,6 +114,19 @@ production decode integration or a general PCSS speedup claim.
   Thus the measured bounded benefit is not unique to two drafted tokens; it is
   consistent with batched verification itself. K=1 and K=2 were separate
   bounded runs, so their estimates do not select an optimal or production K.
+- The required SSSD portability preflight is `BLOCKED` for its current upstream
+  source, not for PCSS. On this M4 arm64 host, a clean clone of
+  `huawei-csl/sssd_speculator` at `cafa17938c1970c280d4dac57e527c02601c067b`
+  configured successfully in an isolated Python 3.12 venv (the PCSS venv is
+  Python 3.14 and is outside SSSD's declared `<=3.12` CMake range), then failed
+  during AppleClang compilation. The source unconditionally exposes Linux
+  `cpu_set_t`/`sched_*` affinity APIs on Apple and declares
+  `std::shared_ptr<bool[]>` while setting C++14, which does not provide the
+  required array specialization. No PCSS checkout, llama.cpp installation,
+  sidecar, model, or target decode was changed. Treat SSSD as a research
+  reference only until an independently reviewed upstream portability patch
+  builds and passes its own datastore tests; do not substitute it for the
+  immutable u32 read-only prototype.
 - Revision `62901edd6b1fbd4f57860476a468245508514e3d` adds a deterministic,
   trace-token-only forced-rejection profile: it replaces exactly one candidate
   token while retaining the recorded target as the authority. On the corrected
