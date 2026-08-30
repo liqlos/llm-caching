@@ -184,9 +184,17 @@ def run_roundtrip_harness(
         raise ContractError("roundtrip harness requires matching LOCAL_MEASURED target manifest")
     archive = open_exact_prompt_archive(archive_root)
     cases = []
+    failure: str | None = None
     for pair_spec in pairs:
         source, target = _pair(records, pair_spec, pair_mode="exact_repeat")
-        cases.append(_run_pair(config, archive, source, target, k=k, output_tokens=output_tokens, bridge_runner=bridge_runner))
+        try:
+            cases.append(
+                _run_pair(config, archive, source, target, k=k, output_tokens=output_tokens, bridge_runner=bridge_runner)
+            )
+        except ContractError as error:
+            failure = f"{pair_spec}: {error}"
+            break
+    status = "EXACT_PROMPT_PROVIDER_ROUNDTRIP_VERIFIED" if failure is None else "EXACT_PROMPT_PROVIDER_ROUNDTRIP_FAILED"
     receipt = make_receipt(
         evidence_class="LOCAL_MEASURED",
         command=recorded_module_command("pcss.exact_prompt_roundtrip_harness", command_arguments, repository_root),
@@ -197,11 +205,12 @@ def run_roundtrip_harness(
             "config": file_sha256(config.config_path), "bridge_binary": file_sha256(config.bridge_executable),
             "model_artifact": file_sha256(config.model_artifact), "llama_cpp_library": file_sha256(config.llama_cpp_library),
         },
-        status="EXACT_PROMPT_PROVIDER_ROUNDTRIP_VERIFIED",
+        status=status,
         payload={
             "kind": "sealed_archive_provider_native_pending_roundtrip",
             "host_identity": host.as_dict(), "k": k, "case_count": len(cases), "cases": cases,
             "round_count": sum(len(case["rounds"]) for case in cases),
+            "failure": failure,
             "runtime_claim": "closed-loop provider plus isolated native verifier correctness harness; no throughput or production integration claim",
         },
     )
