@@ -167,6 +167,19 @@ production decode integration or a general PCSS speedup claim.
   controlled edit-path result; repeated re-anchor is disabled as an
   unprofitable widening step until independent trace families justify revisiting
   it. Both receipts exclude provider lookup, prefill/restore, and thermal claims.
+- The independent 12-pair diverse edit family then failed to reproduce a
+  general source-reuse gain. Its trace contains 24 Qwen3-8B LOCAL_MEASURED
+  complete 48-token records (trace SHA-256
+  `d2110662b52d6a4dfb6a3f2bab8765f90d471bbe05836d10cad48bec066287ff`).
+  With the same K=2/no-re-anchor protocol, all output/state comparisons were
+  exact and all checkpoint/reconstruction counts were zero, but the paired
+  serial-over-candidate estimate was `1.013831`, clustered 95% CI
+  `[0.993956, 1.036640]`, status `CONTROLLED_LIVE_DECODE_INCONCLUSIVE` (raw
+  SHA-256 `b2cfd9940cd3e19eb97a42fa80ce0f982118e1b6bae164b79a37133e82708ddb`).
+  Per-request means ranged from `0.965960` to `1.104287`; therefore the
+  preceding three-case source-reuse result is not a general runtime claim and
+  this path needs a pre-verification payoff/abstention signal before any live
+  provider integration.
 - The controlled exact-repeat live run at
   `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
   revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
