@@ -59,3 +59,15 @@ def test_prompt_plan_rejects_duplicate_record_ids(tmp_path: Path) -> None:
 
     with pytest.raises(ContractError, match="record ids must be unique"):
         _load_prompts(path)
+
+
+def test_diverse_edit_fixture_is_a_chronological_twelve_pair_workload() -> None:
+    fixture = Path(__file__).parents[1] / "fixtures/replay/qwen3-8b-diverse-edit-prompts-v1.json"
+
+    tokens_to_generate, prompts = _load_prompts(fixture)
+
+    assert tokens_to_generate == 48
+    assert len(prompts) == 24
+    assert len({prompt["repository_id"] for prompt in prompts}) == 12
+    assert all(prompt["parent_revision"] is None for prompt in prompts[:12])
+    assert all(prompt["parent_revision"] is not None for prompt in prompts[12:])
