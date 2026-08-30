@@ -165,6 +165,20 @@ production decode integration or a general PCSS speedup claim.
   `/Users/ai-server/Projects/pcss-artifacts/runs/strategy-source-edit-615163f-20260830/raw/strategy.raw.json`
   (SHA-256 `b4fe4b6ee689c85294cc20a8ca33833fa5286dbb1a7b20218b53e32f9ae75710`).
   This is not a claim about target verification cost or end-to-end speed.
+- Consensus and negative-evidence diagnostics at revision
+  `3245a81ec1a3dfe7cf44fdfa5478e3b8e9be523e` produce a no-go rather than a
+  manufactured policy: neither the 165 synthetic nor 108 source-edit
+  persistent-candidate opportunities contained two independent provenance
+  families. The exact candidate-class anti-cache also had zero prior
+  suppressions (22 and 63 zero-accept observations respectively), because
+  no class recurred before its later target observation. Consensus thresholds
+  and negative-evidence suppression are therefore not authorized for a future
+  runtime from these traces. Raw receipts are
+  `/Users/ai-server/Projects/pcss-artifacts/runs/consensus-synthetic-3245a81-20260830/raw/consensus.raw.json`
+  (SHA-256 `a184eddc0a87ddc74eb0a4f1720fac680f94bc58c2054a1d17535055eaf34af1`)
+  and
+  `/Users/ai-server/Projects/pcss-artifacts/runs/consensus-source-edit-3245a81-20260830/raw/consensus.raw.json`
+  (SHA-256 `6e9f2e8979309a2d0a658ee8c829cbac828ae8bf90d211790bfc8b7c65159727`).
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
