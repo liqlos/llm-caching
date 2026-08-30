@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from pcss.canonical import ContractError
 from pcss.exact_prompt_external_trajectory import ExternalDraftFault, _build_drafts, _request, _validate
 from pcss.llamacpp_fixture_builder import BridgeConfig
 
@@ -34,7 +37,7 @@ def test_external_trajectory_reanchors_after_a_forced_external_draft_rejection()
     source = {"content": {"committed_token_ids": [3, 4, 5, 6, 7]}}
     target = {"record_id": "target", "content": {"prompt_token_ids": [1, 2], "committed_token_ids": [3, 4, 5, 6, 7]}}
     drafts = _build_drafts((3, 4, 5, 6, 7, 8), k=2, output_tokens=6, fault=ExternalDraftFault(0, 1))
-    assert drafts == ((3, 0), (5, 6))
+    assert drafts == ((3, 3), (5, 6))
     response = {
         "operation": "trajectory_pending", "status": "ok", "all_rounds_match": True,
         "final_state_matches": True, "continuation_matches": True,
@@ -51,3 +54,8 @@ def test_external_trajectory_reanchors_after_a_forced_external_draft_rejection()
     assert verified["exact_output"] is True
     assert verified["output_tokens"] == [3, 4, 5, 6, 7]
     assert [round_["pending_kind"] for round_ in verified["rounds"]] == ["correction", "bonus"]
+
+
+def test_external_trajectory_fault_refuses_a_single_token_archive() -> None:
+    with pytest.raises(ContractError, match="two distinct archive tokens"):
+        _build_drafts((7, 7, 7), k=2, output_tokens=3, fault=ExternalDraftFault(0, 0))

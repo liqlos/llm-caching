@@ -89,7 +89,10 @@ def _build_drafts(
         if fault is not None and round_index == fault.round_index:
             altered = list(draft)
             original = altered[fault.rejection_position]
-            altered[fault.rejection_position] = 0 if original != 0 else 1
+            replacement = next((token for token in tokens if token != original), None)
+            if replacement is None:
+                raise ContractError("external trajectory fault requires at least two distinct archive tokens")
+            altered[fault.rejection_position] = replacement
             drafts.append(tuple(altered))
             cursor += fault.rejection_position + 1
         else:
