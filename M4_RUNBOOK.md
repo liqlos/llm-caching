@@ -241,6 +241,16 @@ production decode integration or a general PCSS speedup claim.
   semantics for a sealed archive and a continuous isolated verifier. They do
   not establish a live provider hook, generic edited-source reuse, decoding
   throughput, latency, speedup, or a production integration.
+- The injected fault is generated from a distinct token already present in the
+  sealed archive, not a fixed special-token ID. The source-derived form was
+  checked on `9a5cfea6432e69942f2fbd27535266f1229d3ed3` against the unchanged
+  bridge/manifest binding above: the `port` position-1 correction at round 7
+  again produced 47 exact committed tokens and an exact correction-round state
+  (`raw/10-port-k2-reject-r7-p1.json` under
+  `/Users/ai-server/Projects/pcss-artifacts/runs/provider-external-fault-source-9a5cfea-20260830/`,
+  SHA-256 `dc9fc8adf9d1e1baef2bd0f0c2585d0188527635795248e748c6d81cec6c0350`).
+  This is one source-validity regression check, not additional throughput or
+  generalization evidence.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
