@@ -163,7 +163,7 @@ def run_exact_prompt_live_harness(
             config, source, target, k=k, output_tokens=output_tokens,
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
             candidate_tokens=candidate,
-            operation="live_pending",
+            operation="single_context_live_pending",
             forced_rejection_position=(output_tokens // 2 if cluster == "controlled_rejection" else None),
         )
         response = _validate_response(

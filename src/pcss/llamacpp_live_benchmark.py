@@ -149,7 +149,10 @@ def _request(
 def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, Any]:
     try:
         operation = request.get("operation")
-        guard = "--pcss-live-pending" if operation == "live_pending" else "--pcss-benchmark-pending"
+        guard = {
+            "live_pending": "--pcss-live-pending",
+            "single_context_live_pending": "--pcss-single-context-live-pending",
+        }.get(operation, "--pcss-benchmark-pending")
         completed = subprocess.run(
             (str(config.bridge_executable), guard),
             input=canonical_json(request) + "\n",
@@ -183,7 +186,10 @@ def _validate_response(
     expected = {
         "schema_version": (
             "pcss.llama-bridge-persistent-live/v1"
-            if request["operation"] == "live_pending" else RESPONSE_SCHEMA_VERSION
+            if request["operation"] == "live_pending" else (
+                "pcss.llama-bridge-single-context-live/v1"
+                if request["operation"] == "single_context_live_pending" else RESPONSE_SCHEMA_VERSION
+            )
         ),
         "operation": request["operation"],
         "status": "ok",
@@ -200,8 +206,11 @@ def _validate_response(
         "measurement_clock": "std::chrono::steady_clock/nanoseconds/v1",
         "measurement_scope": (
             "decode-and-synchronize/single-context/prefill-restore-provider-excluded/v1"
-            if request["operation"] == "live_pending"
-            else "decode-and-synchronize/prefill-restore-provider-excluded/v1"
+            if request["operation"] == "live_pending" else (
+                "decode-and-synchronize/one-native-context/prefill-restore-provider-excluded/v1"
+                if request["operation"] == "single_context_live_pending"
+                else "decode-and-synchronize/prefill-restore-provider-excluded/v1"
+            )
         ),
         "provider_integration": "static-trace-candidate/provider-lookup-excluded/v1",
         "state_export": "model-architecture+memory-state/v2",

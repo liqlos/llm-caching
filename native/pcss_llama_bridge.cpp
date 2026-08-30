@@ -45,6 +45,7 @@ constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
 constexpr const char * kPendingBenchmarkSchema = "pcss.llama-bridge-pending-benchmark/v2";
 constexpr const char * kPersistentLiveSchema = "pcss.llama-bridge-persistent-live/v1";
+constexpr const char * kSingleContextLiveSchema = "pcss.llama-bridge-single-context-live/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -1316,6 +1317,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("trajectory_pending"),
         Json("benchmark_pending"),
         Json("live_pending"),
+        Json("single_context_live_pending"),
         Json("profile"),
         Json("profile_pending"),
     });
@@ -2467,7 +2469,8 @@ HandledResponse profile_pending(const Json::Object & request) {
 HandledResponse benchmark_pending(
     const Json::Object & request,
     const char * operation = "benchmark_pending",
-    bool release_prompt_context = false
+    bool release_prompt_context = false,
+    bool reuse_prefill_context = false
 ) {
     require_exact_keys(
         request,
@@ -2529,8 +2532,15 @@ HandledResponse benchmark_pending(
     // the sole timed context.  The older benchmark operation retains its
     // historical layout so its failed receipt remains immutable and distinct.
     std::optional<Context> retained_prompt;
+    std::optional<Context> prefilled_working;
     std::vector<std::uint8_t> prompt_state;
-    if (release_prompt_context) {
+    if (reuse_prefill_context) {
+        prefilled_working.emplace(runtime.make_context());
+        if (!prefix_tokens.empty()) {
+            decode_tokens(*prefilled_working, prefix_tokens, 0U, false);
+        }
+        prompt_state = snapshot_state(*prefilled_working);
+    } else if (release_prompt_context) {
         Context prompt = runtime.make_context();
         if (!prefix_tokens.empty()) {
             decode_tokens(prompt, prefix_tokens, 0U, false);
@@ -2703,7 +2713,7 @@ HandledResponse benchmark_pending(
     // A 24 GiB Apple-unified-memory target cannot safely retain three Metal
     // contexts for the same Q4 model.  Reuse one context and restore the
     // identical prefilling snapshot before each interleaved arm instead.
-    Context working = runtime.make_context();
+    Context working = reuse_prefill_context ? std::move(*prefilled_working) : runtime.make_context();
     for (std::size_t index = 0; index < warmup_repetitions; ++index) {
         restore_state(working, prompt_state);
         const DecodeRun serial = run_serial(working);
@@ -2750,7 +2760,7 @@ HandledResponse benchmark_pending(
     }
 
     Json::Object result = result_base(
-        release_prompt_context ? kPersistentLiveSchema : kPendingBenchmarkSchema,
+        reuse_prefill_context ? kSingleContextLiveSchema : (release_prompt_context ? kPersistentLiveSchema : kPendingBenchmarkSchema),
         operation,
         "ok"
     );
@@ -2772,9 +2782,7 @@ HandledResponse benchmark_pending(
     result["measurements"] = Json(std::move(measurements));
     result["measurement_clock"] = Json("std::chrono::steady_clock/nanoseconds/v1");
     result["measurement_scope"] = Json(
-        release_prompt_context
-            ? "decode-and-synchronize/single-context/prefill-restore-provider-excluded/v1"
-            : "decode-and-synchronize/prefill-restore-provider-excluded/v1"
+        reuse_prefill_context ? "decode-and-synchronize/one-native-context/prefill-restore-provider-excluded/v1" : (release_prompt_context ? "decode-and-synchronize/single-context/prefill-restore-provider-excluded/v1" : "decode-and-synchronize/prefill-restore-provider-excluded/v1")
     );
     result["provider_integration"] = Json("static-trace-candidate/provider-lookup-excluded/v1");
     result["exact_output_and_state"] = Json(true);
@@ -2826,6 +2834,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     }
     if (operation == "live_pending") {
         return benchmark_pending(object, "live_pending", true);
+    }
+    if (operation == "single_context_live_pending") {
+        return benchmark_pending(object, "single_context_live_pending", false, true);
     }
     throw BridgeError("invalid_request", "unsupported bridge operation");
 }
@@ -2885,6 +2896,9 @@ const char * operation_from_argv(int argc, char ** argv) {
     }
     if (argument == "--pcss-live-pending") {
         return "live_pending";
+    }
+    if (argument == "--pcss-single-context-live-pending") {
+        return "single_context_live_pending";
     }
     throw BridgeError(
         "invalid_invocation",
