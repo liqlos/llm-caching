@@ -38,9 +38,10 @@ llama.cpp build, and runtime configuration.
 
 `M4_RUNBOOK.md` records the immutable Qwen3-8B Q4_K_M verifier and isolated
 profile procedure. The current target receipt covers exact raw-token
-correctness suites and paired decode-only perfect-draft timings. It excludes
-live PCSS, provider cost, accepted-prefix workload distributions, sustained
-thermal qualification, and any transferable speedup claim.
+correctness suites, paired decode-only perfect-draft timings, and deterministic
+single-rejection controls. It excludes live PCSS/provider integration,
+representative accepted-prefix workload distributions, sustained thermal
+qualification, and any transferable speedup claim.
 
 ## Offline fixture receipt
 
