@@ -71,3 +71,15 @@ def test_diverse_edit_fixture_is_a_chronological_twelve_pair_workload() -> None:
     assert len({prompt["repository_id"] for prompt in prompts}) == 12
     assert all(prompt["parent_revision"] is None for prompt in prompts[:12])
     assert all(prompt["parent_revision"] is not None for prompt in prompts[12:])
+
+
+def test_cross_repository_positive_control_has_no_same_repository_source() -> None:
+    fixture = Path(__file__).parents[1] / "fixtures/replay/qwen3-8b-cross-repo-positive-control-prompts-v1.json"
+
+    _, prompts = _load_prompts(fixture)
+
+    sources, targets = prompts[:12], prompts[12:]
+    assert len(prompts) == 24
+    assert {prompt["repository_id"] for prompt in sources}.isdisjoint(
+        {prompt["repository_id"] for prompt in targets}
+    )
