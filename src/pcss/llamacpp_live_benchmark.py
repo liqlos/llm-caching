@@ -159,7 +159,8 @@ def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, A
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
         raise ContractError("pcss_llama_bridge benchmark did not return one JSON response") from error
     if completed.returncode != 0 or not isinstance(response, dict):
-        raise ContractError("pcss_llama_bridge benchmark failed")
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no bridge diagnostic"
+        raise ContractError(f"pcss_llama_bridge benchmark failed: {detail[:1000]}")
     return response
 
 
