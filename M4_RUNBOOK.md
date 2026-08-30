@@ -221,6 +221,26 @@ production decode integration or a general PCSS speedup claim.
   (`raw/11-all-external-trajectories.json`). This proves continuous isolated
   native verification of externally supplied archive drafts, not a provider
   hook, throughput, end-to-end request, or production integration claim.
+- Correction-path coverage is separately bound to commit
+  `d742d1e58a04f2db918829e16424b2481baaf785`, fresh bridge
+  `9a897a7c97b0fa22b5363aaf9e79cdf453f1bdf58b1e50190ebb06c050855a25`,
+  config `f77f0d67609d2135a68b52e4ec125d3a426d0848809e1cdc533166a5afcb51bc`,
+  and observed manifest
+  `d136fae386ab893d8ebc7cf0cb4471442de0929d84a6fd897faecda9c9000c58` in
+  `/Users/ai-server/Projects/pcss-artifacts/runs/provider-external-correction-d742d1e-20260830/`.
+  Each run deliberately replaces one external K=2 archive draft token at round
+  7, then forms subsequent drafts from the actual committed prefix. Both K=2
+  positions passed across all twelve independent exact-repeat cases: position 1
+  produced 12 corrections, 192 exact state/continuation rounds and 47 committed
+  tokens per case (`raw/11-all-k2-reject-r7-p1.json`, SHA-256
+  `cd456515ce2dec7102b1c793baf850ce627995e23dc74e1b858e20161523fab4`);
+  position 0 produced the same 12 corrections and 192 exact rounds with 46
+  committed tokens per case (`raw/12-all-k2-reject-r7-p0.json`, SHA-256
+  `6097f84a39d9465e549f15f4b3eeb7aa5184eaec215c68c704e85a85e11799e2`).
+  These are `LOCAL_MEASURED EXTERNAL_ARCHIVE_TRAJECTORY_VERIFIED` correction
+  semantics for a sealed archive and a continuous isolated verifier. They do
+  not establish a live provider hook, generic edited-source reuse, decoding
+  throughput, latency, speedup, or a production integration.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
