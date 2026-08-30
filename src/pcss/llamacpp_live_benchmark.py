@@ -160,7 +160,7 @@ def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, A
         raise ContractError("pcss_llama_bridge benchmark did not return one JSON response") from error
     if completed.returncode != 0 or not isinstance(response, dict):
         detail = completed.stderr.strip() or completed.stdout.strip() or "no bridge diagnostic"
-        raise ContractError(f"pcss_llama_bridge benchmark failed: {detail[:1000]}")
+        raise ContractError(f"pcss_llama_bridge benchmark failed: {detail[:8000]}")
     return response
 
 
