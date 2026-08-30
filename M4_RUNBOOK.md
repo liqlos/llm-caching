@@ -106,6 +106,14 @@ production decode integration or a general PCSS speedup claim.
   This causally supersedes the negative K=2 implementation result, but its claim
   remains controlled exact-repeat decode-only: provider lookup, prefill/restore,
   misses/rejections, and thermal sustainability are excluded.
+- A separate K=1 exact-repeat profile on the same immutable backend was also
+  exact output/state, with zero checkpoints/reconstructions and paired
+  serial-over-candidate ratio `1.112690`, clustered 95% CI
+  `[1.108550, 1.115544]` (raw SHA-256
+  `200bf7fe5d9a7f36632fb9b812748c3526129e3428257c88057ab6789a4cad95`).
+  Thus the measured bounded benefit is not unique to two drafted tokens; it is
+  consistent with batched verification itself. K=1 and K=2 were separate
+  bounded runs, so their estimates do not select an optimal or production K.
 - Revision `62901edd6b1fbd4f57860476a468245508514e3d` adds a deterministic,
   trace-token-only forced-rejection profile: it replaces exactly one candidate
   token while retaining the recorded target as the authority. On the corrected
