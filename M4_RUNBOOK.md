@@ -52,6 +52,15 @@ one fixed Qwen3-8B GGUF configuration. It does not attach PCSS to live decoding.
   1.150–1.274 microseconds for no-op, 0.882–0.896 microseconds for always-miss,
   and 2.462–2.472 microseconds for deterministic shadow-hit. This is a Python
   ABI microprofile, not a live-decode overhead result.
+- The derived economics receipt at
+  `artifacts/m4/economics-3522274.raw.json`, SHA-256
+  `c5b8118ada5b48dde9da404358fd93416723c3d22bf69f70ec8d1366b4f73cae`,
+  combines only those immutable measured inputs. Its decision is
+  `NO_GO_CURRENT_SERIAL_CANONICAL_COMMIT`: for every measured K={1,2,4,8,16,32},
+  the upper 95% confidence bound for the current exact-state path is below 1.0.
+  Batch-only K=16 and K=32 rooflines do not override this gate because the
+  current bridge must serially reconstruct all committed tokens after batch
+  verification.
 - Do not stop, restart, reconfigure, or share resources with the existing
   persona-rag sidecar. PCSS runs only from the dedicated paths below.
 
@@ -455,6 +464,25 @@ It records empty-call controls both before and after each provider block and
 bootstraps whole blocks. Do not substitute its microsecond result for a shadow
 provider attached to real target generation.
 
+Derive the fail-closed economics decision from the three immutable receipts:
+
+~~~sh
+PYTHONPATH=src python3 -m pcss.economics \
+  --profile artifacts/m4/qwen3-8b-q4km-8c82b52/raw/20-verifier-profile.json \
+  --verifier artifacts/m4/qwen3-8b-q4km-8c82b52/raw/10-k-sweep.json \
+  --provider artifacts/m4/provider-abi-121c139/raw/00-provider-abi-profile.json \
+  --output artifacts/m4/economics-3522274.raw.json \
+  --report artifacts/m4/economics-3522274.report.md \
+  --repository-root .
+~~~
+
+The command rejects dirty checkouts, failed or non-local receipts, mismatched
+verifier revisions, different target hosts, and non-target correctness
+evidence. `NO_GO_CURRENT_SERIAL_CANONICAL_COMMIT` is a kill gate for attaching
+the present provider/verifier path to live decoding. It is not a negative claim
+about a future verifier that can preserve exact canonical state without serial
+reconstruction.
+
 The actual e71fa7e951be run has exactly these durable artifacts; reports exist
 only after their matching raw artifact:
 
@@ -491,6 +519,8 @@ Stop immediately and preserve the run directory if any of these happens:
   lacks the named seed identity/non-empty context, or provenance changes;
 - any runner receipt is NOT_RUN, FAILED, not LOCAL_MEASURED, or has a case
   commit/state mismatch. Do not proceed to the next suite;
+- the derived economics receipt is `NO_GO_CURRENT_SERIAL_CANONICAL_COMMIT`.
+  Do not select K or attach the current verifier/provider path to live decoding;
 - the recorded e71 k=4 serial_batched_state_mismatch is already such a kill
   gate. It is not a debugging instruction or a basis for a PCSS conclusion;
   preserve the receipt and perform no further target action for that
@@ -499,8 +529,10 @@ Stop immediately and preserve the run directory if any of these happens:
   or an unchanged failed input set would need a retry.
 
 A verified individual case establishes only its tested raw-token commit and
-model-memory state equivalence for that case. It does not establish live speculative
-decode correctness, provider economics, an optimal K, speedup, mmap-versus-
-pread, unified-memory behavior, swap/page-fault behavior, Metal behavior,
-thermals, online storage behavior, or a production PCSS controller. Those
-remain separate M4-only gates with their own raw artifacts.
+model-memory state equivalence for that case. The isolated profile and derived
+economics receipt establish a no-go only for the measured current serial
+canonical-commit path. They do not establish live speculative decode
+correctness, an optimal K, speedup, mmap-versus-pread, unified-memory behavior,
+swap/page-fault behavior, Metal behavior, thermals, online storage behavior, or
+a production PCSS controller. Those remain separate gates and must not be run
+through the current path after its economics kill gate.
