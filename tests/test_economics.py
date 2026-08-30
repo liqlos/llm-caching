@@ -71,3 +71,26 @@ def test_economics_rejects_unverified_or_cross_revision_inputs() -> None:
     verifier["git_revision"] = "b" * 40
     with pytest.raises(ContractError, match="different revisions"):
         _derive(_profile(), verifier, _provider())
+
+
+def test_pending_economics_reports_only_an_exact_perfect_draft_roofline() -> None:
+    profile = _profile()
+    profile["payload"]["kind"] = "isolated_exact_state_pending_token_profile"
+    profile["payload"]["raw_profile"]["operation"] = "profile_pending"
+
+    result = _derive(profile, _verifier(), _provider())
+
+    assert result["decision"] == "PENDING_EXACT_PERFECT_DRAFT_ROOFLINE_POSITIVE"
+    assert result["protocol"] == "pending_native"
+    row = result["rows"][0]
+    assert row["pending_exact_perfect_draft_ratio_ci"]["lower"] > 1.9
+    assert "live_pcss_speedup" in result["not_claimed"]
+
+
+def test_pending_economics_fails_closed_on_wrong_profile_operation() -> None:
+    profile = _profile()
+    profile["payload"]["kind"] = "isolated_exact_state_pending_token_profile"
+    profile["payload"]["raw_profile"]["operation"] = "profile"
+
+    with pytest.raises(ContractError, match="incompatible bridge operation"):
+        _derive(profile, _verifier(), _provider())

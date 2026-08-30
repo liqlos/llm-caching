@@ -85,6 +85,15 @@ def _derive(
     if not isinstance(profiles, list) or not profiles:
         raise ContractError("verifier profile contains no measured K rows")
     provider_upper = _provider_upper_ns(provider_receipt)
+    profile_kind = profile_payload.get("kind", "isolated_exact_state_verifier_profile")
+    if profile_kind not in {
+        "isolated_exact_state_verifier_profile",
+        "isolated_exact_state_pending_token_profile",
+    }:
+        raise ContractError("verifier profile has an unsupported kind")
+    pending_protocol = profile_kind == "isolated_exact_state_pending_token_profile"
+    if pending_protocol and raw_profile.get("operation") != "profile_pending":
+        raise ContractError("pending-token verifier profile has an incompatible bridge operation")
 
     rows: list[dict[str, Any]] = []
     for profile in profiles:
@@ -128,25 +137,63 @@ def _derive(
                     "upper": canonical_interval.upper,
                     "confidence_level": canonical_interval.confidence_level,
                 },
+                "pending_exact_perfect_draft_ratio_ci": (
+                    {
+                        "estimate": batch_interval.estimate,
+                        "lower": batch_interval.lower,
+                        "upper": batch_interval.upper,
+                        "confidence_level": batch_interval.confidence_level,
+                    }
+                    if pending_protocol
+                    else None
+                ),
             }
         )
+    not_claimed = [
+        "live_pcss_speedup",
+        "profitable_k",
+        "workload_acceptance_distribution",
+        "thermal_qualification",
+        "transfer_to_other_models_or_backends",
+    ]
+    if pending_protocol:
+        lower_bounds = [row["pending_exact_perfect_draft_ratio_ci"]["lower"] for row in rows]
+        upper_bounds = [row["pending_exact_perfect_draft_ratio_ci"]["upper"] for row in rows]
+        if all(lower > 1.0 for lower in lower_bounds):
+            decision = "PENDING_EXACT_PERFECT_DRAFT_ROOFLINE_POSITIVE"
+            reason = (
+                "at every measured exact-state K, one pending-token verification batch plus the conservative "
+                "always-miss provider bound is faster than the paired serial decode baseline under a perfect draft; "
+                "this is an isolated roofline, not a workload or live-decode speedup"
+            )
+        elif all(upper < 1.0 for upper in upper_bounds):
+            decision = "NO_GO_PENDING_EXACT_PERFECT_DRAFT_ROOFLINE"
+            reason = (
+                "even perfect drafts do not overcome one pending-token verification batch plus the conservative "
+                "always-miss provider bound at the measured exact-state K values"
+            )
+        else:
+            decision = "INCONCLUSIVE_PENDING_EXACT_PERFECT_DRAFT_ROOFLINE"
+            reason = "the clustered confidence interval crosses parity for at least one measured exact-state K"
+        return {
+            "decision": decision,
+            "protocol": "pending_native",
+            "rows": rows,
+            "reason": reason,
+            "not_claimed": not_claimed,
+        }
     no_go = all(row["current_serial_canonical_commit_ratio_ci"]["upper"] < 1.0 for row in rows)
     if not no_go:
         raise ContractError("canonical-commit no-go invariant unexpectedly failed")
     return {
         "decision": "NO_GO_CURRENT_SERIAL_CANONICAL_COMMIT",
+        "protocol": "serial",
         "rows": rows,
         "reason": (
             "the verified exact-state path performs batch verification and then serially reconstructs every committed "
             "token; even perfect drafts therefore cost T_batch + T_serial before other runtime overhead"
         ),
-        "not_claimed": [
-            "live_pcss_speedup",
-            "profitable_k",
-            "workload_acceptance_distribution",
-            "thermal_qualification",
-            "transfer_to_other_models_or_backends",
-        ],
+        "not_claimed": not_claimed,
     }
 
 
