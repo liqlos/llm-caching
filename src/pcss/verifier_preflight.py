@@ -108,7 +108,7 @@ def preflight_target_observation(
             payload = _not_run_payload(
                 adapter=adapter,
                 availability=availability,
-                reason="adapter does not declare TARGET_BACKEND",
+                reason=f"adapter does not declare TARGET_BACKEND: {availability.reason}",
             )
         else:
             try:
