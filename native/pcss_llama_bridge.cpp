@@ -1829,7 +1829,11 @@ HandledResponse verify_pending(const Json::Object & request) {
     return {Json(std::move(result)), successful};
 }
 
-HandledResponse trajectory_pending(const Json::Object & request, ModelRuntime * persistent_runtime = nullptr) {
+HandledResponse trajectory_pending(
+    const Json::Object & request,
+    ModelRuntime * persistent_runtime = nullptr,
+    Context * persistent_verifier = nullptr
+) {
     require_exact_keys(
         request,
         {
@@ -1882,7 +1886,15 @@ HandledResponse trajectory_pending(const Json::Object & request, ModelRuntime * 
             decode_tokens(context, prefix_tokens, 0U, false);
         }
     };
-    Context verifier = runtime.make_context();
+    std::optional<Context> owned_verifier;
+    Context * verifier_ptr = persistent_verifier;
+    if (verifier_ptr == nullptr) {
+        owned_verifier.emplace(runtime.make_context());
+        verifier_ptr = &*owned_verifier;
+    } else if (!llama_memory_seq_rm(llama_get_memory(verifier_ptr->raw()), 0, 0, -1)) {
+        throw BridgeError("state_reset_unsupported", "llama.cpp cannot reset the persistent trajectory verifier context");
+    }
+    Context & verifier = *verifier_ptr;
     Context reference = runtime.make_context();
     decode_prefix(verifier);
     decode_prefix(reference);
@@ -2934,6 +2946,7 @@ int main(int argc, char ** argv) {
     llama_backend_init();
     bool failed = false;
     std::optional<ModelRuntime> persistent_trajectory_runtime;
+    std::optional<Context> persistent_trajectory_verifier;
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) {
@@ -2959,8 +2972,13 @@ int main(int argc, char ** argv) {
                 }
                 if (!persistent_trajectory_runtime.has_value()) {
                     persistent_trajectory_runtime.emplace(parse_config(object));
+                    persistent_trajectory_verifier.emplace(persistent_trajectory_runtime->make_context());
                 }
-                return trajectory_pending(object, &*persistent_trajectory_runtime);
+                return trajectory_pending(
+                    object,
+                    &*persistent_trajectory_runtime,
+                    &*persistent_trajectory_verifier
+                );
             }();
             std::cout << json_dump(response.payload) << '\n';
             if (!response.successful) {
