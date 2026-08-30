@@ -55,6 +55,8 @@ def response_for(request: dict) -> dict:
             "accepted_tokens": 3,
             "verification_rounds": 2,
             "serial_fallback_steps": 1,
+            "reanchor_attempts": 1,
+            "reanchor_successes": 1,
         }
         for index in range(benchmark["measurement_repetitions"])
     ]
@@ -69,6 +71,7 @@ def response_for(request: dict) -> dict:
         "output_tokens": benchmark["output_tokens"],
         "warmup_repetitions": benchmark["warmup_repetitions"],
         "measurement_repetitions": benchmark["measurement_repetitions"],
+        "reanchor_min_tokens": benchmark["reanchor_min_tokens"],
         "authoritative_tokens": benchmark["candidate_tokens"][: benchmark["output_tokens"]],
         "candidate_prefix_tokens": benchmark["candidate_tokens"][: benchmark["output_tokens"]],
         "final_state_sha256": "a" * 64,

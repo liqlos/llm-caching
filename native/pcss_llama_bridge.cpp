@@ -2398,7 +2398,10 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     const Json::Object & benchmark = as_object(required_field(request, "benchmark"), "benchmark");
     require_exact_keys(
         benchmark,
-        {"case_id", "candidate_tokens", "k", "output_tokens", "warmup_repetitions", "measurement_repetitions"}
+        {
+            "case_id", "candidate_tokens", "k", "output_tokens", "warmup_repetitions",
+            "measurement_repetitions", "reanchor_min_tokens"
+        }
     );
     const std::string case_id = required_string(benchmark, "case_id");
     const std::vector<llama_token> candidate_tokens = required_tokens(benchmark, "candidate_tokens");
@@ -2409,6 +2412,9 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     );
     const std::size_t measurement_repetitions = static_cast<std::size_t>(
         required_u32(benchmark, "measurement_repetitions", 2U)
+    );
+    const std::size_t reanchor_min_tokens = static_cast<std::size_t>(
+        required_u32(benchmark, "reanchor_min_tokens", 0U)
     );
     if (k + 1U > config.runtime.n_batch) {
         throw BridgeError("invalid_request", "pending benchmark batch exceeds configured n_batch");
@@ -2443,6 +2449,8 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         std::size_t accepted = 0U;
         std::size_t verification_rounds = 0U;
         std::size_t serial_fallback_steps = 0U;
+        std::size_t reanchor_attempts = 0U;
+        std::size_t reanchor_successes = 0U;
     };
     auto run_serial = [&](Context & context) {
         DecodeRun run;
@@ -2463,11 +2471,35 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         run.emitted.reserve(output_count);
         llama_token pending = anchor_token;
         std::size_t committed_size = prefix_size;
+        std::size_t source_cursor = 0U;
         bool candidate_enabled = true;
+        auto try_reanchor = [&]() {
+            if (candidate_enabled || reanchor_min_tokens == 0U || run.emitted.size() < reanchor_min_tokens) {
+                return;
+            }
+            ++run.reanchor_attempts;
+            const auto suffix_begin = run.emitted.end() - static_cast<std::ptrdiff_t>(reanchor_min_tokens);
+            for (std::size_t position = source_cursor;
+                 position + reanchor_min_tokens <= candidate_tokens.size();
+                 ++position) {
+                if (std::equal(
+                        suffix_begin,
+                        run.emitted.end(),
+                        candidate_tokens.begin() + static_cast<std::ptrdiff_t>(position)
+                    )) {
+                    source_cursor = position + reanchor_min_tokens;
+                    candidate_enabled = source_cursor < candidate_tokens.size();
+                    if (candidate_enabled) {
+                        ++run.reanchor_successes;
+                    }
+                    return;
+                }
+            }
+        };
         run.decode_ns = measured_nanoseconds([&]() {
             while (run.emitted.size() < output_count) {
                 const std::size_t remaining = output_count - run.emitted.size();
-                const std::size_t candidate_remaining = candidate_tokens.size() - run.emitted.size();
+                const std::size_t candidate_remaining = candidate_tokens.size() - source_cursor;
                 const std::size_t draft_count = candidate_enabled && remaining > 1U
                     ? std::min({k, remaining - 1U, candidate_remaining})
                     : 0U;
@@ -2477,6 +2509,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                     run.emitted.push_back(pending);
                     ++committed_size;
                     ++run.serial_fallback_steps;
+                    try_reanchor();
                     continue;
                 }
                 std::vector<llama_token> batch;
@@ -2484,8 +2517,8 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                 batch.push_back(pending);
                 batch.insert(
                     batch.end(),
-                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(run.emitted.size()),
-                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(run.emitted.size() + draft_count)
+                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor),
+                    candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor + draft_count)
                 );
                 decode_one_batch_with_all_logits(context, batch, committed_size);
                 std::vector<llama_token> targets;
@@ -2510,14 +2543,22 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                 for (std::size_t index = 0; index < accepted; ++index) {
                     run.emitted.push_back(batch[index + 1U]);
                 }
+                source_cursor += accepted;
                 committed_size += 1U + accepted;
                 if (accepted < draft_count) {
                     pending = targets[accepted];
                     run.emitted.push_back(pending);
                     candidate_enabled = false;
+                    try_reanchor();
                 } else {
                     pending = targets[draft_count];
                     run.emitted.push_back(pending);
+                    if (source_cursor < candidate_tokens.size() && candidate_tokens[source_cursor] == pending) {
+                        ++source_cursor;
+                    } else {
+                        candidate_enabled = false;
+                        try_reanchor();
+                    }
                 }
             }
         });
@@ -2570,6 +2611,8 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         row["accepted_tokens"] = Json(static_cast<std::int64_t>(speculative.accepted));
         row["verification_rounds"] = Json(static_cast<std::int64_t>(speculative.verification_rounds));
         row["serial_fallback_steps"] = Json(static_cast<std::int64_t>(speculative.serial_fallback_steps));
+        row["reanchor_attempts"] = Json(static_cast<std::int64_t>(speculative.reanchor_attempts));
+        row["reanchor_successes"] = Json(static_cast<std::int64_t>(speculative.reanchor_successes));
         measurements.emplace_back(Json(std::move(row)));
     }
 
@@ -2580,6 +2623,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
     result["output_tokens"] = Json(static_cast<std::int64_t>(output_count));
     result["warmup_repetitions"] = Json(static_cast<std::int64_t>(warmup_repetitions));
     result["measurement_repetitions"] = Json(static_cast<std::int64_t>(measurement_repetitions));
+    result["reanchor_min_tokens"] = Json(static_cast<std::int64_t>(reanchor_min_tokens));
     result["authoritative_tokens"] = token_array(authoritative_tokens);
     result["candidate_prefix_tokens"] = token_array(
         std::vector<llama_token>(candidate_tokens.begin(), candidate_tokens.begin() + output_count)

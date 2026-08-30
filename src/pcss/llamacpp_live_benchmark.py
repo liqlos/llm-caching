@@ -39,6 +39,7 @@ RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-pending-benchmark/v1"
 _RESPONSE_FIELDS = {
     "schema_version", "operation", "status", "backend", "case_id", "seed_id", "k",
     "output_tokens", "warmup_repetitions", "measurement_repetitions", "authoritative_tokens",
+    "reanchor_min_tokens",
     "candidate_prefix_tokens", "final_state_sha256", "final_state_bytes", "measurements",
     "measurement_clock", "measurement_scope", "provider_integration", "exact_output_and_state",
     "configuration", "observed_context", "state_export", "state_api", "generation_mode",
@@ -48,6 +49,7 @@ _RESPONSE_FIELDS = {
 _MEASUREMENT_FIELDS = {
     "iteration", "serial_before_ns", "candidate_decode_ns", "serial_after_ns", "proposed_tokens",
     "accepted_tokens", "verification_rounds", "serial_fallback_steps",
+    "reanchor_attempts", "reanchor_successes",
 }
 _FINGERPRINT_FIELDS = (
     "model_fingerprint", "tokenizer_fingerprint", "chat_template_fingerprint",
@@ -98,6 +100,7 @@ def _request(
     output_tokens: int,
     warmup_repetitions: int,
     measurement_repetitions: int,
+    reanchor_min_tokens: int = 0,
 ) -> dict[str, Any]:
     prompt = tuple(target["content"]["prompt_token_ids"])
     candidate = tuple(source["content"]["committed_token_ids"])
@@ -109,6 +112,8 @@ def _request(
         raise ContractError("benchmark output_tokens must be between two and the candidate length")
     if warmup_repetitions < 0 or measurement_repetitions < 2:
         raise ContractError("benchmark requires non-negative warmups and at least two measurements")
+    if reanchor_min_tokens < 0 or reanchor_min_tokens > output_tokens:
+        raise ContractError("benchmark reanchor_min_tokens is outside the output boundary")
     return {
         "schema_version": REQUEST_SCHEMA_VERSION,
         "operation": "benchmark_pending",
@@ -124,6 +129,7 @@ def _request(
             "output_tokens": output_tokens,
             "warmup_repetitions": warmup_repetitions,
             "measurement_repetitions": measurement_repetitions,
+            "reanchor_min_tokens": reanchor_min_tokens,
         },
     }
 
@@ -170,6 +176,7 @@ def _validate_response(
         "output_tokens": benchmark["output_tokens"],
         "warmup_repetitions": benchmark["warmup_repetitions"],
         "measurement_repetitions": benchmark["measurement_repetitions"],
+        "reanchor_min_tokens": benchmark["reanchor_min_tokens"],
         "candidate_prefix_tokens": benchmark["candidate_tokens"][: benchmark["output_tokens"]],
         "exact_output_and_state": True,
         "measurement_clock": "std::chrono::steady_clock/nanoseconds/v1",
@@ -226,10 +233,15 @@ def _validate_response(
             raise ContractError("benchmark measurement order is not deterministic")
         for field in ("serial_before_ns", "candidate_decode_ns", "serial_after_ns"):
             _positive_int(row[field], f"benchmark measurement.{field}")
-        for field in ("proposed_tokens", "accepted_tokens", "verification_rounds", "serial_fallback_steps"):
+        for field in (
+            "proposed_tokens", "accepted_tokens", "verification_rounds", "serial_fallback_steps",
+            "reanchor_attempts", "reanchor_successes",
+        ):
             require_int(row[field], f"benchmark measurement.{field}", minimum=0)
         if row["accepted_tokens"] > row["proposed_tokens"]:
             raise ContractError("benchmark accepted more tokens than it proposed")
+        if row["reanchor_successes"] > row["reanchor_attempts"]:
+            raise ContractError("benchmark has more re-anchor successes than attempts")
         normalized.append(dict(row))
     return {**dict(response), "measurements": normalized}
 
@@ -249,6 +261,7 @@ def run_live_benchmark(
     warmup_repetitions: int = 2,
     measurement_repetitions: int = 8,
     pair_mode: str = "exact_repeat",
+    reanchor_min_tokens: int = 0,
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
@@ -279,6 +292,7 @@ def run_live_benchmark(
         request = _request(
             config, source, target, k=k, output_tokens=output_tokens,
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
+            reanchor_min_tokens=reanchor_min_tokens,
         )
         response = _validate_response(
             bridge_runner(config, request), request, config,
@@ -339,6 +353,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-repetitions", type=int, default=2)
     parser.add_argument("--measurement-repetitions", type=int, default=8)
     parser.add_argument("--pair-mode", choices=("exact_repeat", "source_reuse"), default="exact_repeat")
+    parser.add_argument("--reanchor-min-tokens", type=int, default=0)
     return parser
 
 
@@ -352,6 +367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_tokens=parsed.output_tokens, warmup_repetitions=parsed.warmup_repetitions,
         measurement_repetitions=parsed.measurement_repetitions,
         pair_mode=parsed.pair_mode,
+        reanchor_min_tokens=parsed.reanchor_min_tokens,
     )
     return 0
 
