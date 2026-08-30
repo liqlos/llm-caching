@@ -131,6 +131,20 @@ production decode integration or a general PCSS speedup claim.
   This is the decode-only ceiling after an exact persistent archive hit and
   exact-prompt admission are available; it excludes lookup/provider execution,
   prefill, restore, misses, and thermal effects.
+- The same corrected trace now has a concrete read-only archive control rather
+  than an in-memory fixture. Revision `3316ad94156cd9e8847da99b1425e766444f454c`
+  sealed twelve source streams as `prompt || committed` in the existing u32
+  archive format: 3,812 token bytes, 22,008-byte fixed-key index, and 31,969
+  bytes total (`raw/00-build.json`, SHA-256
+  `3072004ce995da2b9e71ee454585f98ca39e4e5252b056293b6250f6212da0fe`).
+  Its M4 warm lookup-plus-K=2-cursor profile had one exact hit for every target
+  and net `39.809` microseconds per call, clustered 95% CI `[36.109, 44.052]`
+  microseconds (`raw/10-lookup-profile.json`, SHA-256
+  `852017dac610e84993cc5a970995a28b7028d15dcb546e609255a319d22d4a7b`).
+  The call uses the sealed four-token sorted index only to narrow candidates,
+  then compares the complete visible prompt before returning a bounded cursor.
+  It is a warm immutable lookup/cursor microprofile, not provider lifecycle,
+  target decode, cold-I/O, storage-layout, or end-to-end speedup evidence.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
