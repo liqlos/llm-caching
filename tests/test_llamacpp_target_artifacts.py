@@ -121,7 +121,7 @@ def _capability(config, *, probe_token: int = 7) -> dict:
         "restored_state_sha256": "a" * 64,
         "restored_state_bytes": 128,
         "state_round_trip_byte_exact": True,
-        "operations": ["capabilities", "reference", "verify"],
+        "operations": ["capabilities", "reference", "verify", "profile"],
     }
 
 

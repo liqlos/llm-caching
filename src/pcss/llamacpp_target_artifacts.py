@@ -321,7 +321,7 @@ def _validate_capability_response(response: Mapping[str, Any], config: BridgeCon
         raise ContractError("pcss_llama_bridge observed context differs from the explicit runtime config")
     if response["state_components"] != ["model_architecture_identity", "llama_memory"]:
         raise ContractError("pcss_llama_bridge capability model-memory state coverage is incomplete")
-    if response["operations"] != ["capabilities", "reference", "verify"]:
+    if response["operations"] != ["capabilities", "reference", "verify", "profile"]:
         raise ContractError("pcss_llama_bridge capability operation set is incomplete")
     for field in (
         "llama_c_api_version",

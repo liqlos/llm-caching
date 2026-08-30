@@ -16,6 +16,7 @@ cmake --build build/native --parallel 2
 build/native/pcss_llama_bridge --pcss-capabilities
 build/native/pcss_llama_bridge --pcss-reference
 build/native/pcss_llama_bridge --pcss-verify-case
+build/native/pcss_llama_bridge --pcss-profile
 ~~~
 
 The runtime request shape is deliberately explicit:
@@ -182,6 +183,35 @@ declared_identity_fields, chat_template_applied, thinking_mode_applied
 mutable_state_digest is the canonical committed-state digest. The bridge never takes
 caller-provided target tokens or expected state digests; the harness must
 independently validate those values.
+
+## Isolated verifier profile
+
+`--pcss-profile` is available only after the correctness suites pass for the
+same committed bridge, model, llama.cpp library, and runtime configuration. It
+adds a capability-derived raw-token seed and this bounded profile request:
+
+~~~json
+{
+  "operation": "profile",
+  "profile": {
+    "k_values": [1, 2, 4, 8, 16, 32],
+    "warmup_repetitions": 2,
+    "measurement_repetitions": 8
+  }
+}
+~~~
+
+For every K, the bridge derives a perfect continuation serially, then records
+paired serial-before, one-batch verifier, and serial-after decode durations.
+Each timed decode is synchronized. Context creation and model loading are
+outside the measurement, while state restore and snapshot durations are
+reported separately. The response schema is
+`pcss.llama-bridge-profile/v1`.
+
+This is an isolated decode profiler, not live PCSS. Its decode-only ratio omits
+provider cost, canonical commit work, scheduling, sustained thermal behavior,
+and end-to-end workload acceptance. A caller must preserve raw repetitions and
+fail closed when the two serial baselines exceed its predeclared tolerance.
 
 ## Fail-closed behavior
 

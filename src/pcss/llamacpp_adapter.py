@@ -488,7 +488,12 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
     if probe_digest != restored_digest or probe_bytes != restored_bytes:
         raise ContractError(f"{field} model-memory state round trip changed bytes")
     operations = response["operations"]
-    if not isinstance(operations, list) or tuple(operations) != ("capabilities", "reference", "verify"):
+    if not isinstance(operations, list) or tuple(operations) != (
+        "capabilities",
+        "reference",
+        "verify",
+        "profile",
+    ):
         raise ContractError(f"{field} has an incomplete operation set")
 
     loaded_library = _absolute_regular_path(

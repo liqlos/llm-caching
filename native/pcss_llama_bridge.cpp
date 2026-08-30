@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cctype>
 #include <charconv>
@@ -36,6 +37,7 @@ constexpr const char * kResultSchema = "pcss.llama-bridge-result/v1";
 constexpr const char * kCapabilitiesSchema = "pcss.llama-bridge-capabilities/v2";
 constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
 constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
+constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
 constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
@@ -1302,6 +1304,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("capabilities"),
         Json("reference"),
         Json("verify"),
+        Json("profile"),
     });
     return {Json(std::move(result)), true};
 }
@@ -1549,6 +1552,199 @@ HandledResponse verify(const Json::Object & request) {
     return {Json(std::move(result)), successful};
 }
 
+std::vector<std::uint32_t> required_k_values(const Json::Object & profile) {
+    const Json::Array & values = as_array(required_field(profile, "k_values"), "profile.k_values");
+    if (values.empty()) {
+        throw BridgeError("invalid_request", "profile.k_values must not be empty");
+    }
+    std::vector<std::uint32_t> result;
+    result.reserve(values.size());
+    for (const Json & item : values) {
+        if (item.kind != Json::Kind::integer || item.integer < 1 ||
+            item.integer > static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw BridgeError("invalid_request", "profile.k_values must contain positive u32 integers");
+        }
+        const auto value = static_cast<std::uint32_t>(item.integer);
+        if (std::find(result.begin(), result.end(), value) != result.end()) {
+            throw BridgeError("invalid_request", "profile.k_values must not contain duplicates");
+        }
+        result.push_back(value);
+    }
+    return result;
+}
+
+template <typename Function>
+std::int64_t measured_nanoseconds(Function && function) {
+    const auto started = std::chrono::steady_clock::now();
+    function();
+    const auto finished = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(finished - started).count();
+}
+
+HandledResponse profile(const Json::Object & request) {
+    require_exact_keys(
+        request,
+        {
+            "schema_version",
+            "operation",
+            "model_artifact",
+            "llama_cpp_library",
+            "llama_cpp_revision",
+            "runtime",
+            "seed",
+            "profile",
+        }
+    );
+    require_request_schema(request, "profile");
+    const RequestConfig config = parse_config(request);
+    const SeedSpec seed = parse_seed(request, false);
+    const Json::Object & profile_config = as_object(required_field(request, "profile"), "profile");
+    require_exact_keys(profile_config, {"k_values", "warmup_repetitions", "measurement_repetitions"});
+    const std::vector<std::uint32_t> k_values = required_k_values(profile_config);
+    const std::uint32_t warmup_repetitions = required_u32(profile_config, "warmup_repetitions", 0U);
+    const std::uint32_t measurement_repetitions = required_u32(
+        profile_config,
+        "measurement_repetitions",
+        2U
+    );
+    const std::uint32_t max_k = *std::max_element(k_values.begin(), k_values.end());
+    if (max_k > config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "profile k exceeds configured n_batch");
+    }
+    if (seed.initial_context_tokens.size() > config.runtime.n_ctx ||
+        static_cast<std::size_t>(max_k) + 1U >
+            static_cast<std::size_t>(config.runtime.n_ctx) - seed.initial_context_tokens.size()) {
+        throw BridgeError("invalid_request", "profile k plus target lookahead exceeds remaining n_ctx");
+    }
+
+    ModelRuntime runtime(config);
+    runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
+    Context prompt = runtime.make_context();
+    decode_tokens(prompt, seed.initial_context_tokens, 0U, false);
+    const std::vector<std::uint8_t> prompt_state = snapshot_state(prompt);
+    const llama_token prompt_target = greedy_argmax(prompt, runtime.vocabulary_size());
+
+    Context target_source = runtime.make_context();
+    restore_state(target_source, prompt_state);
+    const std::vector<llama_token> perfect_tokens = serial_greedy_tokens(
+        target_source,
+        seed.initial_context_tokens.size(),
+        static_cast<std::size_t>(max_k) + 1U,
+        runtime.vocabulary_size()
+    );
+    if (perfect_tokens.front() != prompt_target) {
+        throw BridgeError("internal_error", "profile serial target changed at the prompt boundary");
+    }
+
+    Json::Array profiles;
+    for (const std::uint32_t k : k_values) {
+        const std::vector<llama_token> draft(perfect_tokens.begin(), perfect_tokens.begin() + k);
+        Context serial_before = runtime.make_context();
+        Context verifier = runtime.make_context();
+        Context serial_after = runtime.make_context();
+
+        auto run_serial = [&](Context & context) {
+            for (std::size_t index = 0; index < draft.size(); ++index) {
+                if (greedy_argmax(context, runtime.vocabulary_size()) != draft[index]) {
+                    throw BridgeError("profile_correctness_failed", "serial profile target changed");
+                }
+                decode_tokens(
+                    context,
+                    std::vector<llama_token>{draft[index]},
+                    seed.initial_context_tokens.size() + index,
+                    true
+                );
+            }
+            llama_synchronize(context.raw());
+        };
+        auto run_batch = [&]() {
+            decode_one_batch_with_all_logits(verifier, draft, seed.initial_context_tokens.size());
+            llama_synchronize(verifier.raw());
+            for (std::size_t index = 0; index < draft.size(); ++index) {
+                if (greedy_argmax_at(verifier, runtime.vocabulary_size(), static_cast<std::int32_t>(index)) !=
+                    perfect_tokens[index + 1U]) {
+                    throw BridgeError(
+                        "profile_correctness_failed",
+                        "batch verifier target differs from the serial reference"
+                    );
+                }
+            }
+        };
+
+        for (std::uint32_t iteration = 0; iteration < warmup_repetitions; ++iteration) {
+            restore_state(serial_before, prompt_state);
+            run_serial(serial_before);
+            restore_state(verifier, prompt_state);
+            run_batch();
+            restore_state(serial_after, prompt_state);
+            run_serial(serial_after);
+        }
+
+        Json::Array measurements;
+        for (std::uint32_t iteration = 0; iteration < measurement_repetitions; ++iteration) {
+            const std::int64_t restore_before_ns = measured_nanoseconds([&]() {
+                restore_state(serial_before, prompt_state);
+                llama_synchronize(serial_before.raw());
+            });
+            const std::int64_t serial_before_ns = measured_nanoseconds([&]() { run_serial(serial_before); });
+            const std::int64_t restore_batch_ns = measured_nanoseconds([&]() {
+                restore_state(verifier, prompt_state);
+                llama_synchronize(verifier.raw());
+            });
+            const std::int64_t batch_verify_ns = measured_nanoseconds([&]() { run_batch(); });
+            const std::int64_t restore_after_ns = measured_nanoseconds([&]() {
+                restore_state(serial_after, prompt_state);
+                llama_synchronize(serial_after.raw());
+            });
+            const std::int64_t serial_after_ns = measured_nanoseconds([&]() { run_serial(serial_after); });
+            const std::int64_t snapshot_ns = measured_nanoseconds([&]() {
+                const std::vector<std::uint8_t> state = snapshot_state(serial_after);
+                if (state.empty()) {
+                    throw BridgeError("internal_error", "profile snapshot unexpectedly empty");
+                }
+            });
+
+            Json::Object row;
+            row["iteration"] = Json(static_cast<std::int64_t>(iteration));
+            row["restore_before_ns"] = Json(restore_before_ns);
+            row["serial_before_ns"] = Json(serial_before_ns);
+            row["restore_batch_ns"] = Json(restore_batch_ns);
+            row["batch_verify_ns"] = Json(batch_verify_ns);
+            row["restore_after_ns"] = Json(restore_after_ns);
+            row["serial_after_ns"] = Json(serial_after_ns);
+            row["snapshot_ns"] = Json(snapshot_ns);
+            measurements.emplace_back(Json(std::move(row)));
+        }
+
+        Json::Object profile_row;
+        profile_row["k"] = Json(static_cast<std::int64_t>(k));
+        profile_row["perfect_draft_tokens"] = token_array(draft);
+        profile_row["measurements"] = Json(std::move(measurements));
+        profiles.emplace_back(Json(std::move(profile_row)));
+    }
+
+    Json::Object result = result_base(kProfileSchema, "profile", "ok");
+    result["measurement_clock"] = Json("std::chrono::steady_clock/nanoseconds/v1");
+    result["measurement_scope"] = Json("decode-and-synchronize/no-context-creation/v1");
+    result["claim_boundary"] = Json("isolated-perfect-draft-verifier-profile/not-live-pcss/v1");
+    result["seed_id"] = Json(seed.seed_id);
+    result["warmup_repetitions"] = Json(static_cast<std::int64_t>(warmup_repetitions));
+    result["measurement_repetitions"] = Json(static_cast<std::int64_t>(measurement_repetitions));
+    result["prompt_state_sha256"] = Json(sha256_hex(prompt_state));
+    result["prompt_state_bytes"] = Json(static_cast<std::int64_t>(prompt_state.size()));
+    result["profiles"] = Json(std::move(profiles));
+    result["configuration"] = runtime_echo(config);
+    result["observed_context"] = observed_context(prompt);
+    result["state_export"] = Json(kStateExport);
+    result["state_api"] = Json(kStateApi);
+    result["generation_mode"] = Json("greedy_argmax");
+    result["greedy_tie_break"] = Json("lowest-token-id/v1");
+    result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
+    result["chat_template_applied"] = Json(false);
+    result["thinking_mode_applied"] = Json(false);
+    return {Json(std::move(result)), true};
+}
+
 HandledResponse handle_request(const Json & request, const char * expected_operation) {
     const Json::Object & object = as_object(request, "request");
     const std::string operation = required_string(object, "operation");
@@ -1563,6 +1759,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     }
     if (operation == "verify") {
         return verify(object);
+    }
+    if (operation == "profile") {
+        return profile(object);
     }
     throw BridgeError("invalid_request", "unsupported bridge operation");
 }
@@ -1589,7 +1788,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, or --pcss-verify-case"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, or --pcss-profile"
         );
     }
     const std::string argument(argv[1]);
@@ -1601,6 +1800,9 @@ const char * operation_from_argv(int argc, char ** argv) {
     }
     if (argument == "--pcss-verify-case") {
         return "verify";
+    }
+    if (argument == "--pcss-profile") {
+        return "profile";
     }
     throw BridgeError(
         "invalid_invocation",
