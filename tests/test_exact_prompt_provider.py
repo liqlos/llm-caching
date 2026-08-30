@@ -6,7 +6,7 @@ from pathlib import Path
 from pcss.exact_prompt_archive import build_exact_prompt_archive
 from pcss.exact_prompt_provider import ExactPromptArchiveShadowProvider, ExactPromptDescriptor
 from pcss.exact_repeat_trace import derive_exact_repeat_records
-from pcss.provider import Fingerprints, Proposal, RequestContext, TrustedScope
+from pcss.provider import Feedback, Fingerprints, Proposal, RequestContext, TrustedScope
 
 
 ROOT = Path(__file__).parents[1]
@@ -37,5 +37,18 @@ def test_exact_prompt_provider_reads_sealed_cursor_and_abstains_on_unknown_promp
     )
     assert isinstance(result, Proposal)
     assert result.tokens == tuple(target["content"]["committed_token_ids"][:2])
+    provider.feedback(
+        request.request_id,
+        Feedback(result.proposal_id, "all_accepted", 2, result.tokens, None, "same_repository"),
+    )
+    chained = provider.propose(request.request_id, tail_tokens=(0,), max_tokens=2, deadline_ns=100)
+    assert isinstance(chained, Proposal)
+    assert chained.tokens == tuple(target["content"]["committed_token_ids"][2:4])
+    provider.feedback(
+        request.request_id,
+        Feedback(chained.proposal_id, "rejected", 0, (999,), None, "same_repository"),
+    )
+    diverged = provider.propose(request.request_id, tail_tokens=(0,), max_tokens=2, deadline_ns=100)
+    assert diverged.reason == "authoritative_prefix_diverged"
     miss = provider.propose(request.request_id, tail_tokens=(1, 2, 3, 4), max_tokens=2, deadline_ns=100)
-    assert miss.reason == "no_exact_prompt_descriptor"
+    assert miss.reason == "authoritative_prefix_diverged"
