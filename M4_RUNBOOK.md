@@ -84,6 +84,14 @@ production decode integration or a general PCSS speedup claim.
   Each 48-token case performed 12 timed serial-state reconstructions. This
   fallback is therefore correctness evidence and a performance kill gate, not
   a viable K=3 PCSS runtime path.
+- The same isolated upstream configuration also rejects K=2 as a runtime
+  speedup: `raw/21-controlled-live-k2.json` is output/state exact but
+  `CONTROLLED_LIVE_DECODE_INCONCLUSIVE`, with serial/candidate ratio `0.742307`
+  and clustered 95% CI `[0.717225, 0.759173]` (SHA-256
+  `64e6b6b945cc9b3f639ab3f23f0dd9b45a64810f55f01e2ba22b3678d2602c7c`).
+  It supersedes neither the old K=2 receipt nor its narrow claim, but proves
+  that the earlier positive decode-only result does not reproduce across the
+  isolated llama.cpp build; neither receipt supports a portable K=2 claim.
 - The controlled exact-repeat live run at
   `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
   revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
