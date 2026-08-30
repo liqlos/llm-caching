@@ -179,6 +179,20 @@ production decode integration or a general PCSS speedup claim.
   and
   `/Users/ai-server/Projects/pcss-artifacts/runs/consensus-source-edit-3245a81-20260830/raw/consensus.raw.json`
   (SHA-256 `6e9f2e8979309a2d0a658ee8c829cbac828ae8bf90d211790bfc8b7c65159727`).
+- The request-clustered capacity curve at revision
+  `89ec9f82da5e2a998e40702e926387794fda3c26` limits the earlier descriptive
+  policy comparison. Each trace has only four nonzero-value request clusters:
+  at 384 and 768 bytes the 95% clustered request-mean active-capture intervals
+  are broad (including zero and one) for both policies. The 1536-byte
+  value-density point is 100% in all four observed clusters, but is the full
+  active-view endpoint rather than evidence of a smaller capacity knee.
+  No capacity, growth rule, or production policy is selected from these tiny
+  traces. The sealed receipts are
+  `/Users/ai-server/Projects/pcss-artifacts/runs/capacity-ci-synthetic-89ec9f8-20260830/raw/capacity-ci.raw.json`
+  (SHA-256 `ac3500235db76f0f285270189aecb5c569ef8cffa0d493c1d1664943e09d33d6`)
+  and
+  `/Users/ai-server/Projects/pcss-artifacts/runs/capacity-ci-source-edit-89ec9f8-20260830/raw/capacity-ci.raw.json`
+  (SHA-256 `a39e3d77050bab6c592fa89239f6553d2af9e0f5f29f2f0b6fc8eefea200e378`).
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
