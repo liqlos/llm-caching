@@ -90,6 +90,46 @@ def _candidate_scope(candidate: Candidate) -> TrustedScope:
     )
 
 
+def _exact_prompt_candidates(
+    *,
+    target: ReplayRecord,
+    history: Sequence[ReplayRecord],
+    position: int,
+    k: int,
+) -> list[Candidate]:
+    """Return only cross-session full-prompt cache entries known before target."""
+
+    result: list[Candidate] = []
+    for source in history:
+        if (
+            source.scope.session_id == target.scope.session_id
+            or source.prompt_tokens != target.prompt_tokens
+            or not source.eligible_for_persistent_store
+            or source.scope.principal_namespace != target.scope.principal_namespace
+            or source.scope.application_id != target.scope.application_id
+            or position >= len(source.committed_tokens)
+        ):
+            continue
+        tier = SourceTier.SAME_REPOSITORY if source.scope.same_repository(target.scope) else SourceTier.PERSONAL_PERSISTENT_HISTORY
+        result.append(
+            Candidate(
+                tier=tier,
+                source_record_id=source.record_id,
+                source_cursor=position,
+                matched_suffix_length=len(target.prompt_tokens),
+                continuation=source.committed_tokens[position : position + k],
+                accepted_prefix_length=continuation_prefix_length(
+                    target.committed_tokens[position :], source.committed_tokens[position : position + k]
+                ),
+                source_token_bytes=source.logical_source_bytes,
+                source_scope=source.scope,
+                provenance_family=source.provenance_family,
+                source_class=source.source_class,
+            )
+        )
+    return result
+
+
 def run_shadow(
     *,
     trace_path: Path,
@@ -99,12 +139,14 @@ def run_shadow(
     command_arguments: Sequence[str],
     min_suffix: int = 4,
     k: int = 2,
+    exact_prompt_only: bool = False,
 ) -> ResultReceipt:
     if min_suffix < 1 or k < 1:
         raise ContractError("shadow min_suffix and k must be positive")
     records = load_trace_fixture(trace_path)
     replay = replay_chronologically(records, min_suffix=min_suffix, max_continuation=k)
     record_by_id = {record.record_id: record for record in replay.records}
+    record_index = {record.record_id: index for index, record in enumerate(replay.records)}
     opportunities_by_record: dict[str, list[Any]] = defaultdict(list)
     for opportunity in replay.opportunities:
         opportunities_by_record[opportunity.record_id].append(opportunity)
@@ -125,7 +167,15 @@ def run_shadow(
         shadow_candidates: list[ShadowCandidate] = []
         candidate_by_tail: dict[tuple[int, ...], Candidate] = {}
         for opportunity in opportunities:
-            persistent = [candidate for candidate in opportunity.candidates if candidate.tier in _PERSISTENT_TIERS]
+            if exact_prompt_only:
+                persistent = _exact_prompt_candidates(
+                    target=target,
+                    history=replay.records[: record_index[record_id]],
+                    position=opportunity.position,
+                    k=k,
+                )
+            else:
+                persistent = [candidate for candidate in opportunity.candidates if candidate.tier in _PERSISTENT_TIERS]
             if persistent:
                 persistent_oracle_positions += int(max(candidate.accepted_prefix_length for candidate in persistent) > 0)
                 persistent_oracle_tokens += max(candidate.accepted_prefix_length for candidate in persistent)
@@ -134,7 +184,7 @@ def run_shadow(
                 continue
             selected = min(eligible, key=_rank)
             query = target.prompt_tokens + target.committed_tokens[: opportunity.position]
-            tail = query[-selected.matched_suffix_length :]
+            tail = query if exact_prompt_only else query[-selected.matched_suffix_length :]
             if tail in candidate_by_tail:
                 selected_by_position[opportunity.position] = candidate_by_tail[tail]
                 continue
@@ -176,7 +226,7 @@ def run_shadow(
                 abstentions += 1
                 continue
             query = target.prompt_tokens + target.committed_tokens[: opportunity.position]
-            tail = query[-selected.matched_suffix_length :]
+            tail = query if exact_prompt_only else query[-selected.matched_suffix_length :]
             result = provider.propose(request_id, tail_tokens=tail, max_tokens=k, deadline_ns=10**30)
             if isinstance(result, Abstention):
                 abstentions += 1
@@ -215,6 +265,7 @@ def run_shadow(
     analysis = {
         "min_suffix": min_suffix,
         "k": k,
+        "exact_prompt_only": exact_prompt_only,
         "positions": len(replay.opportunities),
         "proposed_positions": proposed_positions,
         "accepted_positions": accepted_positions,
@@ -244,6 +295,7 @@ def run_shadow(
         payload={
             "kind": "provider_abi_posthoc_shadow",
             "analysis": analysis,
+            "admission_policy": "exact_prompt_only/v1" if exact_prompt_only else "longest_suffix_only/v1",
             "telemetry": telemetry,
             "future_tokens_used_for_retrieval": replay.future_tokens_used_for_retrieval,
             "runtime_claim": "post-hoc shadow acceptance only; target output was not changed and no speedup is claimed",
@@ -262,6 +314,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
     parser.add_argument("--min-suffix", type=int, default=4)
     parser.add_argument("--k", type=int, default=2)
+    parser.add_argument("--exact-prompt-only", action="store_true")
     return parser
 
 
@@ -276,6 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_arguments=arguments,
         min_suffix=args.min_suffix,
         k=args.k,
+        exact_prompt_only=args.exact_prompt_only,
     )
     return 0
 

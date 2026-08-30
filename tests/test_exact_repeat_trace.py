@@ -54,6 +54,9 @@ def test_exact_repeat_derivation_is_cross_session_and_chronological() -> None:
     assert records[0]["content"] == records[2]["content"]
     assert records[0]["session_id"] != records[2]["session_id"]
     assert records[0]["request_id"] != records[2]["request_id"]
+    assert records[2]["artifact_lineage"]["parent_revision"] == records[0]["artifact_lineage"]["revision"]
+    assert records[2]["artifact_lineage"]["revision"].endswith("--exact-repeat")
+    assert records[2]["artifact_lineage"]["path_hash"] is None
     assert records[0]["reasoning_retention"] == records[2]["reasoning_retention"] == "exclude"
 
 

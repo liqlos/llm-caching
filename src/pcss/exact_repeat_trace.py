@@ -68,6 +68,13 @@ def derive_exact_repeat_records(records: Sequence[Mapping[str, Any]]) -> list[di
         target["record_id"] = f"{source['record_id']}--exact-repeat-target"
         target["request_id"] = f"{source['request_id']}--exact-repeat"
         target["session_id"] = f"{source['session_id']}--exact-repeat"
+        lineage = dict(target["artifact_lineage"])
+        lineage["parent_revision"] = source["artifact_lineage"]["revision"]
+        lineage["revision"] = f"{source['artifact_lineage']['revision']}--exact-repeat"
+        lineage["path_hash"] = None
+        lineage["before_blob"] = None
+        lineage["after_blob"] = None
+        target["artifact_lineage"] = lineage
         target["chronological_index"] = len(ordered) + index
         target["timestamp_ns"] = first_timestamp + (len(ordered) + index) * stride
         result.append(normalize_trace_record(target))
