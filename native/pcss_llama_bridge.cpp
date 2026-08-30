@@ -1624,10 +1624,8 @@ HandledResponse profile(const Json::Object & request) {
     const std::vector<std::uint8_t> prompt_state = snapshot_state(prompt);
     const llama_token prompt_target = greedy_argmax(prompt, runtime.vocabulary_size());
 
-    Context target_source = runtime.make_context();
-    restore_state(target_source, prompt_state);
     const std::vector<llama_token> perfect_tokens = serial_greedy_tokens(
-        target_source,
+        prompt,
         seed.initial_context_tokens.size(),
         static_cast<std::size_t>(max_k) + 1U,
         runtime.vocabulary_size()
@@ -1642,6 +1640,14 @@ HandledResponse profile(const Json::Object & request) {
         Context serial_before = runtime.make_context();
         Context verifier = runtime.make_context();
         Context serial_after = runtime.make_context();
+        Context restore_before_probe = runtime.make_context();
+        Context restore_batch_probe = runtime.make_context();
+        Context restore_after_probe = runtime.make_context();
+
+        auto prefill = [&](Context & context) {
+            decode_tokens(context, seed.initial_context_tokens, 0U, false);
+            llama_synchronize(context.raw());
+        };
 
         auto run_serial = [&](Context & context) {
             for (std::size_t index = 0; index < draft.size(); ++index) {
@@ -1672,29 +1678,38 @@ HandledResponse profile(const Json::Object & request) {
         };
 
         for (std::uint32_t iteration = 0; iteration < warmup_repetitions; ++iteration) {
-            restore_state(serial_before, prompt_state);
+            serial_before = runtime.make_context();
+            prefill(serial_before);
             run_serial(serial_before);
-            restore_state(verifier, prompt_state);
+            verifier = runtime.make_context();
+            prefill(verifier);
             run_batch();
-            restore_state(serial_after, prompt_state);
+            serial_after = runtime.make_context();
+            prefill(serial_after);
             run_serial(serial_after);
         }
 
         Json::Array measurements;
         for (std::uint32_t iteration = 0; iteration < measurement_repetitions; ++iteration) {
+            serial_before = runtime.make_context();
+            prefill(serial_before);
             const std::int64_t restore_before_ns = measured_nanoseconds([&]() {
-                restore_state(serial_before, prompt_state);
-                llama_synchronize(serial_before.raw());
+                restore_state(restore_before_probe, prompt_state);
+                llama_synchronize(restore_before_probe.raw());
             });
             const std::int64_t serial_before_ns = measured_nanoseconds([&]() { run_serial(serial_before); });
+            verifier = runtime.make_context();
+            prefill(verifier);
             const std::int64_t restore_batch_ns = measured_nanoseconds([&]() {
-                restore_state(verifier, prompt_state);
-                llama_synchronize(verifier.raw());
+                restore_state(restore_batch_probe, prompt_state);
+                llama_synchronize(restore_batch_probe.raw());
             });
             const std::int64_t batch_verify_ns = measured_nanoseconds([&]() { run_batch(); });
+            serial_after = runtime.make_context();
+            prefill(serial_after);
             const std::int64_t restore_after_ns = measured_nanoseconds([&]() {
-                restore_state(serial_after, prompt_state);
-                llama_synchronize(serial_after.raw());
+                restore_state(restore_after_probe, prompt_state);
+                llama_synchronize(restore_after_probe.raw());
             });
             const std::int64_t serial_after_ns = measured_nanoseconds([&]() { run_serial(serial_after); });
             const std::int64_t snapshot_ns = measured_nanoseconds([&]() {

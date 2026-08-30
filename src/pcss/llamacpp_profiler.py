@@ -136,9 +136,13 @@ def _run_bridge(config: BridgeConfig, request: Mapping[str, Any]) -> dict[str, A
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ContractError("pcss_llama_bridge profile process did not complete") from error
+    response = _strict_json_object(completed.stdout, "pcss_llama_bridge profile response")
     if completed.returncode != 0:
+        error = response.get("error")
+        if isinstance(error, dict) and isinstance(error.get("code"), str) and isinstance(error.get("message"), str):
+            raise ContractError(f"pcss_llama_bridge profile failed: {error['code']}: {error['message']}")
         raise ContractError("pcss_llama_bridge profile process returned a non-zero exit status")
-    return _strict_json_object(completed.stdout, "pcss_llama_bridge profile response")
+    return response
 
 
 def _sha256_value(value: object, field: str) -> str:
