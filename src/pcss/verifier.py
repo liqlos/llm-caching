@@ -157,7 +157,10 @@ class TargetFixtureProvenance:
     def __post_init__(self) -> None:
         if self.schema_version != "pcss.target-verifier-fixture-provenance/v2":
             raise ContractError("unsupported target fixture provenance schema")
-        if self.reference_method != "serial-greedy-memory-state/v2":
+        if self.reference_method not in {
+            "serial-greedy-memory-state/v2",
+            "pending-token-serial-greedy-memory-state/v1",
+        }:
             raise ContractError("unsupported target fixture reference method")
         _sha256(self.model_artifact_sha256, "target_fixture_provenance.model_artifact_sha256")
         _sha256(

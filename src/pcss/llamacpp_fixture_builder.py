@@ -42,6 +42,8 @@ FIXTURE_PROVENANCE_SCHEMA_VERSION = "pcss.target-verifier-fixture-provenance/v2"
 BRIDGE_REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
 BRIDGE_RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-reference/v2"
 REFERENCE_METHOD = "serial-greedy-memory-state/v2"
+PENDING_BRIDGE_RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-pending-reference/v1"
+PENDING_REFERENCE_METHOD = "pending-token-serial-greedy-memory-state/v1"
 
 _CONFIG_FIELDS = {
     "schema_version",
@@ -338,14 +340,21 @@ class BridgeReference:
     mutable_state_digest: str
 
 
-def _bridge_request(config: BridgeConfig, *, seed_id: str, context: tuple[int, ...], steps: int) -> dict[str, Any]:
+def _bridge_request(
+    config: BridgeConfig,
+    *,
+    seed_id: str,
+    context: tuple[int, ...],
+    steps: int,
+    commit_protocol: str = "serial",
+) -> dict[str, Any]:
     if steps < 1:
         raise ContractError("reference steps must be positive")
     if len(context) + steps > config.runtime["n_ctx"]:
         raise ContractError("reference context plus steps exceeds configured n_ctx")
     request = {
         "schema_version": BRIDGE_REQUEST_SCHEMA_VERSION,
-        "operation": "reference",
+        "operation": "reference_pending" if commit_protocol == "pending_native" else "reference",
         "model_artifact": str(config.model_artifact),
         "llama_cpp_library": str(config.llama_cpp_library),
         "llama_cpp_revision": config.llama_cpp_revision,
@@ -355,7 +364,9 @@ def _bridge_request(config: BridgeConfig, *, seed_id: str, context: tuple[int, .
             "initial_context_tokens": list(context),
             "steps": steps,
         },
-        "reference": {"method": REFERENCE_METHOD},
+        "reference": {
+            "method": PENDING_REFERENCE_METHOD if commit_protocol == "pending_native" else REFERENCE_METHOD
+        },
     }
     require_exact_keys(request, _BRIDGE_REQUEST_FIELDS, "fixture-builder bridge request")
     require_exact_keys(request["seed"], _BRIDGE_SEED_FIELDS, "fixture-builder bridge request.seed")
@@ -369,11 +380,27 @@ def _run_reference(
     seed_id: str,
     context: tuple[int, ...],
     steps: int,
+    commit_protocol: str = "serial",
 ) -> BridgeReference:
-    request = _bridge_request(config, seed_id=seed_id, context=context, steps=steps)
+    if commit_protocol not in {"serial", "pending_native"}:
+        raise ContractError("unsupported fixture reference commit protocol")
+    request = _bridge_request(
+        config,
+        seed_id=seed_id,
+        context=context,
+        steps=steps,
+        commit_protocol=commit_protocol,
+    )
+    bridge_argument = "--pcss-reference-pending" if commit_protocol == "pending_native" else "--pcss-reference"
+    expected_operation = "reference_pending" if commit_protocol == "pending_native" else "reference"
+    expected_schema = (
+        PENDING_BRIDGE_RESPONSE_SCHEMA_VERSION
+        if commit_protocol == "pending_native"
+        else BRIDGE_RESPONSE_SCHEMA_VERSION
+    )
     try:
         completed = subprocess.run(
-            (str(config.bridge_executable), "--pcss-reference"),
+            (str(config.bridge_executable), bridge_argument),
             input=canonical_json(request) + "\n",
             capture_output=True,
             check=False,
@@ -386,9 +413,9 @@ def _run_reference(
         raise ContractError("pcss_llama_bridge reference process returned a non-zero exit status")
     response = _strict_json_object(completed.stdout, "pcss_llama_bridge reference response")
     require_exact_keys(response, _BRIDGE_RESPONSE_FIELDS, "pcss_llama_bridge reference response")
-    if response["schema_version"] != BRIDGE_RESPONSE_SCHEMA_VERSION:
+    if response["schema_version"] != expected_schema:
         raise ContractError("pcss_llama_bridge reference response schema is unsupported")
-    if response["operation"] != "reference":
+    if response["operation"] != expected_operation:
         raise ContractError("pcss_llama_bridge reference response operation is invalid")
     if response["status"] != "ok" or response["backend"] != "llama.cpp":
         raise ContractError("pcss_llama_bridge reference response is not a successful llama.cpp result")
@@ -475,10 +502,15 @@ def _distinct_rejection_token(target_token: int, vocabulary_size: int) -> int:
     return candidate
 
 
-def _provenance(*, model_artifact_sha256: str, runtime_configuration_fingerprint: str) -> dict[str, str]:
+def _provenance(
+    *,
+    model_artifact_sha256: str,
+    runtime_configuration_fingerprint: str,
+    reference_method: str = REFERENCE_METHOD,
+) -> dict[str, str]:
     return {
         "schema_version": FIXTURE_PROVENANCE_SCHEMA_VERSION,
-        "reference_method": REFERENCE_METHOD,
+        "reference_method": reference_method,
         "model_artifact_sha256": _require_sha256(model_artifact_sha256, "model artifact sha256"),
         "runtime_configuration_fingerprint": _require_sha256(
             runtime_configuration_fingerprint, "runtime configuration fingerprint"
@@ -525,10 +557,18 @@ def _fixture(*, provenance: dict[str, str], cases: Sequence[dict[str, Any]]) -> 
     return {"schema_version": FIXTURE_SCHEMA_VERSION, "provenance": provenance, "cases": ordered_cases}
 
 
-def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_artifact_sha256: str) -> dict[str, dict[str, Any]]:
+def _build_suite_payloads(
+    config: BridgeConfig,
+    seeds: FixtureSeeds,
+    *,
+    model_artifact_sha256: str,
+    commit_protocol: str = "serial",
+) -> dict[str, dict[str, Any]]:
+    reference_method = PENDING_REFERENCE_METHOD if commit_protocol == "pending_native" else REFERENCE_METHOD
     provenance = _provenance(
         model_artifact_sha256=model_artifact_sha256,
         runtime_configuration_fingerprint=config.runtime_configuration_fingerprint,
+        reference_method=reference_method,
     )
     k_sweep_cases: list[dict[str, Any]] = []
     perfect_draft_cases: list[dict[str, Any]] = []
@@ -543,6 +583,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
                 seed_id=seed_id,
                 context=initial_context,
                 steps=k,
+                commit_protocol=commit_protocol,
             )
             k_sweep_cases.append(
                 _case(
@@ -562,6 +603,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
                 seed_id=seed_id,
                 context=initial_context,
                 steps=k + 1,
+                commit_protocol=commit_protocol,
             )
             _require_prefix(
                 BridgeReference(
@@ -591,6 +633,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=initial_context,
             steps=seeds.provider_floor_k,
+            commit_protocol=commit_protocol,
         )
         provider_wrong = _distinct_rejection_token(provider.target_tokens[0], provider.vocabulary_size)
         provider_prefix = _run_reference(
@@ -598,6 +641,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=initial_context,
             steps=1,
+            commit_protocol=commit_protocol,
         )
         _require_prefix(provider_prefix, provider.target_tokens[:1], f"provider-floor seed {seed_id}")
         provider_floor_cases.append(
@@ -618,6 +662,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=initial_context,
             steps=seeds.forced_rejection_k,
+            commit_protocol=commit_protocol,
         )
         for position, target_token in enumerate(forced.target_tokens):
             forced_wrong = _distinct_rejection_token(target_token, forced.vocabulary_size)
@@ -627,6 +672,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
                 seed_id=seed_id,
                 context=initial_context,
                 steps=position + 1,
+                commit_protocol=commit_protocol,
             )
             _require_prefix(
                 committed_reference,
@@ -652,6 +698,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=initial_context,
             steps=plan.context_steps,
+            commit_protocol=commit_protocol,
         )
         reconstructed_context = initial_context + history.target_tokens
         # The verifier receives reconstructed_context as a new prefill.  Its
@@ -662,6 +709,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=reconstructed_context,
             steps=plan.k,
+            commit_protocol=commit_protocol,
         )
         continuation = reconstructed.target_tokens
         mixed_wrong = _distinct_rejection_token(
@@ -677,6 +725,7 @@ def _build_suite_payloads(config: BridgeConfig, seeds: FixtureSeeds, *, model_ar
             seed_id=seed_id,
             context=reconstructed_context,
             steps=plan.rejection_position + 1,
+            commit_protocol=commit_protocol,
         )
         _require_prefix(
             mixed_commit,
@@ -752,6 +801,7 @@ def build_target_fixtures(
     report_path: Path,
     repository_root: Path,
     command_arguments: Sequence[str],
+    commit_protocol: str = "serial",
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
 ) -> ResultReceipt:
     """Write suite-specific v3 fixtures, then an immutable raw receipt and report.
@@ -770,7 +820,12 @@ def build_target_fixtures(
         raise ContractError("target observer must return TargetHostIdentity")
     input_fingerprints = _input_fingerprints(config, seeds)
     model_artifact_sha256 = input_fingerprints["model_artifact"]
-    payloads = _build_suite_payloads(config, seeds, model_artifact_sha256=model_artifact_sha256)
+    payloads = _build_suite_payloads(
+        config,
+        seeds,
+        model_artifact_sha256=model_artifact_sha256,
+        commit_protocol=commit_protocol,
+    )
     if _input_fingerprints(config, seeds) != input_fingerprints:
         raise ContractError("configured bridge/model/config/seed inputs changed while building fixtures")
 
@@ -792,7 +847,9 @@ def build_target_fixtures(
         payload={
             "schema_version": "pcss.llamacpp-fixture-build/v1",
             "claim_boundary": {
-        "fixture_source": REFERENCE_METHOD,
+                "fixture_source": (
+                    PENDING_REFERENCE_METHOD if commit_protocol == "pending_native" else REFERENCE_METHOD
+                ),
                 "not_claimed": [
                     "hardware_performance",
                     "timing",
@@ -804,6 +861,9 @@ def build_target_fixtures(
             "provenance": _provenance(
                 model_artifact_sha256=model_artifact_sha256,
                 runtime_configuration_fingerprint=config.runtime_configuration_fingerprint,
+                reference_method=(
+                    PENDING_REFERENCE_METHOD if commit_protocol == "pending_native" else REFERENCE_METHOD
+                ),
             ),
             "fixtures": output_details,
         },
@@ -823,6 +883,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--raw-result", required=True, type=Path, help="new immutable machine-readable result JSON")
     parser.add_argument("--report", required=True, type=Path, help="new compact report derived from --raw-result")
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--commit-protocol",
+        choices=("serial", "pending_native"),
+        default="serial",
+        help="serial reference boundary used to derive fixture state digests",
+    )
     command_arguments = tuple(argv if argv is not None else sys.argv[1:])
     args = parser.parse_args(command_arguments)
     build_target_fixtures(
@@ -833,6 +899,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_path=args.report,
         repository_root=args.repository_root.resolve(),
         command_arguments=command_arguments,
+        commit_protocol=args.commit_protocol,
     )
     return 0
 

@@ -9,7 +9,7 @@ import pytest
 
 from pcss.canonical import ContractError, sha256
 from pcss.llamacpp_adapter import LlamaCppBridgeAdapter
-from pcss.verifier import VerifierCase
+from pcss.verifier import TargetFixtureProvenance, VerifierCase
 
 
 def _runtime() -> dict[str, object]:
@@ -663,3 +663,22 @@ def test_pending_native_adapter_rejects_false_pending_state_claim(
     assert adapter.availability().execution_class == "TARGET_BACKEND"
     with pytest.raises(ContractError, match="pending-state match claim"):
         adapter.verify(_case())
+
+
+def test_pending_native_adapter_rejects_serial_reference_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _, _, _ = _ready_adapter(tmp_path, monkeypatch)
+    adapter = LlamaCppBridgeAdapter(
+        environment={"PCSS_LLAMACPP_CONFIG": str(tmp_path / "llamacpp-config.json")},
+        commit_protocol="pending_native",
+    )
+    provenance = TargetFixtureProvenance(
+        schema_version="pcss.target-verifier-fixture-provenance/v2",
+        reference_method="serial-greedy-memory-state/v2",
+        model_artifact_sha256="a" * 64,
+        runtime_configuration_fingerprint="b" * 64,
+    )
+
+    with pytest.raises(ContractError, match="reference method is incompatible"):
+        adapter.verify(_case(reference_provenance=provenance))

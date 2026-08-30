@@ -45,9 +45,12 @@ target_tokens = [(context[-1] + prefill_offset + index + 1) % vocabulary_size fo
 state = hashlib.sha256(json.dumps(
     {{"context": context, "target_tokens": target_tokens}}, sort_keys=True, separators=(",", ":")
 ).encode("utf-8")).hexdigest()
+pending = request["operation"] == "reference_pending"
 response = {{
-    "schema_version": "pcss.llama-bridge-reference/v2",
-    "operation": "reference",
+    "schema_version": (
+        "pcss.llama-bridge-pending-reference/v1" if pending else "pcss.llama-bridge-reference/v2"
+    ),
+    "operation": request["operation"],
     "status": "ok",
     "backend": "llama.cpp",
     "generation_mode": "greedy_argmax",
@@ -141,6 +144,7 @@ def _build(
     *,
     monkeypatch: pytest.MonkeyPatch,
     bridge_mode: str = "ok",
+    commit_protocol: str = "serial",
 ):
     bridge = tmp_path / "fake-bridge"
     _write_bridge(bridge, mode=bridge_mode)
@@ -162,9 +166,26 @@ def _build(
         report_path=report,
         repository_root=Path.cwd(),
         command_arguments=("--config", str(config)),
+        commit_protocol=commit_protocol,
         target_observer=_target_identity,
     )
     return receipt, config, seeds, fixture_directory, raw_result, report
+
+
+def test_pending_reference_protocol_is_explicit_in_fixture_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt, _, _, fixture_directory, _, _ = _build(
+        tmp_path,
+        monkeypatch=monkeypatch,
+        commit_protocol="pending_native",
+    )
+
+    assert receipt.payload["claim_boundary"]["fixture_source"] == (
+        "pending-token-serial-greedy-memory-state/v1"
+    )
+    fixture = json.loads((fixture_directory / "long-mixed.v4.json").read_text(encoding="utf-8"))
+    assert fixture["provenance"]["reference_method"] == "pending-token-serial-greedy-memory-state/v1"
 
 
 def test_builds_all_v4_fixture_suites_from_real_bridge_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

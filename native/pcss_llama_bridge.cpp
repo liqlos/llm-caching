@@ -36,6 +36,7 @@ constexpr const char * kRequestSchema = "pcss.llama-bridge-request/v1";
 constexpr const char * kResultSchema = "pcss.llama-bridge-result/v1";
 constexpr const char * kCapabilitiesSchema = "pcss.llama-bridge-capabilities/v2";
 constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
+constexpr const char * kPendingReferenceSchema = "pcss.llama-bridge-pending-reference/v1";
 constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
 constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
@@ -1305,6 +1306,7 @@ HandledResponse capabilities(const Json::Object & request) {
     result["operations"] = Json(Json::Array{
         Json("capabilities"),
         Json("reference"),
+        Json("reference_pending"),
         Json("verify"),
         Json("verify_pending"),
         Json("profile"),
@@ -1313,7 +1315,7 @@ HandledResponse capabilities(const Json::Object & request) {
     return {Json(std::move(result)), true};
 }
 
-HandledResponse reference(const Json::Object & request) {
+HandledResponse reference(const Json::Object & request, bool pending_protocol = false) {
     require_exact_keys(
         request,
         {
@@ -1327,12 +1329,16 @@ HandledResponse reference(const Json::Object & request) {
             "reference",
         }
     );
-    require_request_schema(request, "reference");
+    const char * operation = pending_protocol ? "reference_pending" : "reference";
+    require_request_schema(request, operation);
     const RequestConfig config = parse_config(request);
     const SeedSpec seed = parse_seed(request, true);
     const Json::Object & reference_config = as_object(required_field(request, "reference"), "reference");
     require_exact_keys(reference_config, {"method"});
-    if (required_string(reference_config, "method") != "serial-greedy-memory-state/v2") {
+    const char * reference_method = pending_protocol
+        ? "pending-token-serial-greedy-memory-state/v1"
+        : "serial-greedy-memory-state/v2";
+    if (required_string(reference_config, "method") != reference_method) {
         throw BridgeError("invalid_request", "reference.method is unsupported");
     }
     if (seed.initial_context_tokens.size() > config.runtime.n_ctx ||
@@ -1344,7 +1350,23 @@ HandledResponse reference(const Json::Object & request) {
     ModelRuntime runtime(config);
     runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
     Context source = runtime.make_context();
-    decode_tokens(source, seed.initial_context_tokens, 0U, false);
+    if (pending_protocol) {
+        const std::vector<llama_token> prefix_tokens(
+            seed.initial_context_tokens.begin(),
+            seed.initial_context_tokens.end() - 1
+        );
+        if (!prefix_tokens.empty()) {
+            decode_tokens(source, prefix_tokens, 0U, false);
+        }
+        decode_tokens(
+            source,
+            std::vector<llama_token>{seed.initial_context_tokens.back()},
+            seed.initial_context_tokens.size() - 1U,
+            true
+        );
+    } else {
+        decode_tokens(source, seed.initial_context_tokens, 0U, false);
+    }
     const std::vector<std::uint8_t> prompt_state = snapshot_state(source);
     const std::vector<llama_token> target_tokens = serial_greedy_tokens(
         source,
@@ -1354,7 +1376,11 @@ HandledResponse reference(const Json::Object & request) {
     );
     const std::vector<std::uint8_t> completion_state = snapshot_state(source);
 
-    Json::Object result = result_base(kReferenceSchema, "reference", "ok");
+    Json::Object result = result_base(
+        pending_protocol ? kPendingReferenceSchema : kReferenceSchema,
+        operation,
+        "ok"
+    );
     result["generation_mode"] = Json("greedy_argmax");
     result["greedy_tie_break"] = Json("lowest-token-id/v1");
     result["seed_id"] = Json(seed.seed_id);
@@ -1709,22 +1735,12 @@ HandledResponse verify_pending(const Json::Object & request) {
     if (has_pending_commit) {
         const std::size_t pending_position = prefix_size + 1U + accepted;
         decode_tokens(verifier, std::vector<llama_token>{pending_commit}, pending_position, true);
+        decode_tokens(pending_reference, std::vector<llama_token>{pending_commit}, pending_position, true);
     }
     const llama_token committed_next = greedy_argmax(verifier, runtime.vocabulary_size());
     const std::vector<std::uint8_t> committed_state = snapshot_state(verifier);
-
-    Context reference = runtime.make_context();
-    decode_tokens(reference, seed.initial_context_tokens, 0U, false);
-    for (std::size_t index = 0; index < reference_committed_tokens.size(); ++index) {
-        decode_tokens(
-            reference,
-            std::vector<llama_token>{reference_committed_tokens[index]},
-            seed.initial_context_tokens.size() + index,
-            true
-        );
-    }
-    const llama_token reference_next = greedy_argmax(reference, runtime.vocabulary_size());
-    const std::vector<std::uint8_t> reference_state = snapshot_state(reference);
+    const llama_token reference_next = greedy_argmax(pending_reference, runtime.vocabulary_size());
+    const std::vector<std::uint8_t> reference_state = snapshot_state(pending_reference);
 
     const bool state_matches = reference_state == committed_state;
     const bool continuation_matches = reference_next == committed_next;
@@ -2197,6 +2213,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     if (operation == "reference") {
         return reference(object);
     }
+    if (operation == "reference_pending") {
+        return reference(object, true);
+    }
     if (operation == "verify") {
         return verify(object);
     }
@@ -2234,7 +2253,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
         );
     }
     const std::string argument(argv[1]);
@@ -2243,6 +2262,9 @@ const char * operation_from_argv(int argc, char ** argv) {
     }
     if (argument == "--pcss-reference") {
         return "reference";
+    }
+    if (argument == "--pcss-reference-pending") {
+        return "reference_pending";
     }
     if (argument == "--pcss-verify-case") {
         return "verify";
@@ -2258,7 +2280,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
     );
 }
 

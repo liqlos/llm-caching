@@ -509,6 +509,15 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
         ("capabilities", "reference", "verify", "profile"),
         ("capabilities", "reference", "verify", "verify_pending", "profile"),
         ("capabilities", "reference", "verify", "verify_pending", "profile", "profile_pending"),
+        (
+            "capabilities",
+            "reference",
+            "reference_pending",
+            "verify",
+            "verify_pending",
+            "profile",
+            "profile_pending",
+        ),
     }
     if not isinstance(operations, list) or tuple(operations) not in supported_operation_sets:
         raise ContractError(f"{field} has an incomplete operation set")
@@ -778,6 +787,16 @@ class LlamaCppBridgeAdapter:
         return TargetAdapterBinding(**values)
 
     def verify(self, case: VerifierCase) -> AdapterOutcome:
+        expected_reference_method = (
+            "pending-token-serial-greedy-memory-state/v1"
+            if self._commit_protocol == "pending_native"
+            else "serial-greedy-memory-state/v2"
+        )
+        if (
+            case.reference_provenance is not None
+            and case.reference_provenance.reference_method != expected_reference_method
+        ):
+            raise ContractError("fixture reference method is incompatible with adapter commit protocol")
         prepared = self._frozen_prepared()
         operation = "verify" if self._commit_protocol == "serial" else "verify_pending"
         argument = "--pcss-verify-case" if self._commit_protocol == "serial" else "--pcss-verify-pending-case"

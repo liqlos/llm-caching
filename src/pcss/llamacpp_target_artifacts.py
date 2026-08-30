@@ -325,6 +325,15 @@ def _validate_capability_response(response: Mapping[str, Any], config: BridgeCon
         ("capabilities", "reference", "verify", "profile"),
         ("capabilities", "reference", "verify", "verify_pending", "profile"),
         ("capabilities", "reference", "verify", "verify_pending", "profile", "profile_pending"),
+        (
+            "capabilities",
+            "reference",
+            "reference_pending",
+            "verify",
+            "verify_pending",
+            "profile",
+            "profile_pending",
+        ),
     }
     operations = response["operations"]
     if not isinstance(operations, list) or tuple(operations) not in supported_operation_sets:
