@@ -1,9 +1,10 @@
 # PCSS host-independent foundation
 
 This repository contains the offline contracts needed to falsify or prepare
-Persistent Chained Speculation Store (PCSS) experiments without asserting a
-runtime result. It deliberately does not attach a provider to target decoding,
-measure an Apple M4, or claim a speedup.
+Persistent Chained Speculation Store (PCSS) experiments. It also contains an
+isolated llama.cpp correctness bridge and perfect-draft verifier profiler. It
+does not attach a provider to live target decoding or claim an end-to-end
+speedup.
 
 ## Reproducible environment
 
@@ -30,7 +31,16 @@ test runner stack; `.python-version` declares the minimum development runtime.
 
 All artifacts produced by later replay commands must identify their exact
 command, Git revision, input fingerprint, and evidence class. Hardware-specific
-results remain `NOT_RUN` until the target machine and backend gates are run.
+receipts are valid only for their exact observed target, model, bridge,
+llama.cpp build, and runtime configuration.
+
+## Target evidence boundary
+
+`M4_RUNBOOK.md` records the immutable Qwen3-8B Q4_K_M verifier and isolated
+profile procedure. The current target receipt covers exact raw-token
+correctness suites and paired decode-only perfect-draft timings. It excludes
+live PCSS, provider cost, accepted-prefix workload distributions, sustained
+thermal qualification, and any transferable speedup claim.
 
 ## Offline fixture receipt
 

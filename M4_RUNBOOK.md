@@ -1,8 +1,7 @@
 # M4 verifier runbook — Qwen3-8B Q4_K_M
 
-This is the remaining, target-only correctness procedure for one fixed
-Qwen3-8B GGUF configuration. It is not a performance plan and does not attach
-PCSS to live decoding.
+This is the target-only correctness and isolated verifier-profile procedure for
+one fixed Qwen3-8B GGUF configuration. It does not attach PCSS to live decoding.
 
 ## Current status
 
@@ -29,10 +28,22 @@ PCSS to live decoding.
   - raw/10-k-sweep.json is LOCAL_MEASURED and FAILED. Its k=2 case verified;
     its k=4 case reported serial_batched_state_mismatch. Its SHA-256 is
     8c90980fce21105202fa41781ceb0616ac26f28deb2ca0e982db43fffa3e896d.
-- The k-sweep kill gate stopped that run. Suites 11 through 14 were
+- The k-sweep kill gate stopped that historical run. Suites 11 through 14 were
   deliberately NOT RUN, and no live PCSS decode, performance, or other
   follow-on target action may run under this revision/configuration.
-- No timing or performance experiment has run.
+- A later immutable run at
+  /Users/ai-server/Projects/pcss-artifacts/runs/qwen3-8b-q4km-8c82b52 used
+  committed revision 8c82b52aa8731f2705b2eadb2871eec0ed823e4d. All five
+  correctness suites are LOCAL_MEASURED VERIFIED, including K={2,4}, perfect
+  draft with bonus, provider floor, rejection at every K=4 position, and the
+  long-mixed case. Their raw receipts are 10-k-sweep.json through
+  14-long-mixed.json.
+- That revision then produced raw/20-verifier-profile.json, SHA-256
+  1a260a739f6454147ac3be9407c277298a34ab07374715168e32851807d7a8e5.
+  It is a LOCAL_MEASURED PROFILE_VALID isolated perfect-draft profile for
+  K={1,2,4,8,16,32}, with two warmups and eight paired measurement clusters.
+  Every paired serial baseline passed the predeclared 5% repeatability gate.
+  The decode-only ratio is not a live-PCSS or end-to-end speedup result.
 - Do not stop, restart, reconfigure, or share resources with the existing
   persona-rag sidecar. PCSS runs only from the dedicated paths below.
 
@@ -84,7 +95,8 @@ checkout, so receipts can require a clean revision throughout:
   manifest/observed.json
   fixtures/{k-sweep,perfect-draft,provider-floor,forced-rejection,long-mixed}.v4.json
   raw/{00-preflight,01-manifest,02-seed,03-fixtures,10-k-sweep,
-       11-perfect-draft,12-provider-floor,13-forced-rejection,14-long-mixed}.json
+       11-perfect-draft,12-provider-floor,13-forced-rejection,14-long-mixed,
+       20-verifier-profile}.json
   reports/<matching names>.md
 ~~~
 
@@ -393,6 +405,29 @@ run_suite provider-floor provider-floor.v4.json 12-provider-floor
 run_suite forced-rejection forced-rejection.v4.json 13-forced-rejection
 run_suite long-mixed long-mixed.v4.json 14-long-mixed
 ~~~
+
+Only after all five receipts are LOCAL_MEASURED VERIFIED for the same committed
+bridge and manifest, run the isolated profile once:
+
+~~~sh
+"$PCSS_PYTHON" -m pcss.llamacpp_profiler \
+  --config "$PCSS_CONFIG" \
+  --seeds "$PCSS_SEEDS" \
+  --manifest "$PCSS_MANIFEST" \
+  --output "$PCSS_RUN_ROOT/raw/20-verifier-profile.json" \
+  --report "$PCSS_RUN_ROOT/reports/20-verifier-profile.md" \
+  --repository-root "$PCSS_REPO" \
+  --k 1 --k 2 --k 4 --k 8 --k 16 --k 32 \
+  --warmup-repetitions 2 \
+  --measurement-repetitions 8 \
+  --baseline-relative-tolerance 0.05
+~~~
+
+The raw response records every paired serial-before, batch-verify, and
+serial-after duration, plus restore and snapshot timings. Context creation and
+prompt prefill are outside the timed decode region. Treat
+BASELINE_REPEATABILITY_FAILED as a kill gate. PROFILE_VALID only validates the
+receipt and repeatability; it does not select K or establish profitability.
 
 The actual e71fa7e951be run has exactly these durable artifacts; reports exist
 only after their matching raw artifact:
