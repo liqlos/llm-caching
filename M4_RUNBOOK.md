@@ -206,6 +206,21 @@ production decode integration or a general PCSS speedup claim.
   state on this Qwen/llama.cpp path. Do not continue the all-case roundtrip or
   attach this reseed design to live decode; it does not invalidate the separate
   continuous-state bridge harness or offline provider-chain result.
+- The state-preserving alternative was then implemented as an external-draft
+  form of `trajectory_pending`: each round accepts provider-produced K-token
+  drafts, derives accepted/correction/bonus from native logits, and compares its
+  continuous verifier state with a serial reference. The first build accidentally
+  loaded a global Homebrew `libllama`; `native/CMakeLists.txt` now honors an
+  explicit `LLAMA_CPP_ROOT` before `find_package`, and a fresh preflight/manifest
+  binds the rebuilt bridge `89514c27f6c479096792c9d9cf4efdc65a609e45a198cdfe6b3b4af648ba9009`
+  to the pinned artifact library. Under that binding, all 12 exact-prompt archive
+  cases passed: 192 continuous K=2 external draft rounds, 16 native bonuses and
+  byte-exact 48-token output per case, with every round state comparison true.
+  The receipt is `LOCAL_MEASURED EXTERNAL_ARCHIVE_TRAJECTORY_VERIFIED`, raw
+  SHA-256 `ee1f4dc075b7cefc4205b2b854af5938c96075f80932f6e7fb61a5eaafe176c3`
+  (`raw/11-all-external-trajectories.json`). This proves continuous isolated
+  native verification of externally supplied archive drafts, not a provider
+  hook, throughput, end-to-end request, or production integration claim.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
