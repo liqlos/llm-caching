@@ -517,6 +517,7 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
             "verify_pending",
             "trajectory_pending",
             "benchmark_pending",
+            "live_pending",
             "profile",
             "profile_pending",
         ),
