@@ -18,8 +18,21 @@ PCSS to live decoding.
 - The target Homebrew llama.cpp installation is build 10520, commit
   cd644c395. The commands below bind the actual loaded library and bridge
   hashes instead of trusting this note.
-- No target native bridge capability observation, preflight, seed observation,
-  fixture build, verifier suite, timing, or performance experiment has run.
+- The isolated run at
+  /Users/ai-server/Projects/pcss-artifacts/runs/qwen3-8b-q4km-e71fa7e951be
+  used committed revision e71fa7e951be2ea062689c999002030dd0b328e5:
+  - raw/00-preflight.json is an outer NOT_RUN preflight receipt with a nested
+    observed target;
+  - raw/01-manifest.json produced manifest/observed.json;
+  - raw/02-seed.json and raw/03-fixtures.json are LOCAL_MEASURED seed and
+    fixture-build receipts;
+  - raw/10-k-sweep.json is LOCAL_MEASURED and FAILED. Its k=2 case verified;
+    its k=4 case reported serial_batched_state_mismatch. Its SHA-256 is
+    8c90980fce21105202fa41781ceb0616ac26f28deb2ca0e982db43fffa3e896d.
+- The k-sweep kill gate stopped that run. Suites 11 through 14 were
+  deliberately NOT RUN, and no live PCSS decode, performance, or other
+  follow-on target action may run under this revision/configuration.
+- No timing or performance experiment has run.
 - Do not stop, restart, reconfigure, or share resources with the existing
   persona-rag sidecar. PCSS runs only from the dedicated paths below.
 
@@ -81,6 +94,12 @@ or NOT_RUN raw receipt is evidence: preserve the whole run directory and do
 not rerun unchanged inputs under the same run ID.
 
 ## One bounded target run
+
+The e71fa7e951be2ea062689c999002030dd0b328e5 run above is complete as a
+failed kill-gate result. Do not resume it, overwrite its artifacts, alter its
+fixture/configuration, or continue with suites 11–14. The commands below are
+the exact procedure only for a future, independently committed revision and
+fresh run root; they are not authorization to retry the failed inputs.
 
 Use a committed checkout transferred to the target without a push. If the
 checkout is absent, transfer a Git bundle or clone the same committed revision
@@ -342,7 +361,7 @@ for name in names:
     cases = load_cases(path)
     if not cases or any(not case.initial_context_tokens or not case.seed_id for case in cases):
         raise SystemExit(f"fixture lacks required V3 context/seed identity: {path}")
-    if any(case.seed_id not in {base_seed, base_seed + ":reconstructed"} for case in cases):
+    if any(case.seed_id != base_seed for case in cases):
         raise SystemExit(f"unexpected seed identity: {path}")
 print("five target-bound V3 fixtures: OK")
 PY
@@ -375,19 +394,24 @@ run_suite forced-rejection forced-rejection.v3.json 13-forced-rejection
 run_suite long-mixed long-mixed.v3.json 14-long-mixed
 ~~~
 
-Expected raw artifacts are all of the following; reports exist only after their
-matching raw artifact:
+The actual e71fa7e951be run has exactly these durable artifacts; reports exist
+only after their matching raw artifact:
 
 ~~~text
 raw/00-preflight.json            outer NOT_RUN target observation
 raw/01-manifest.json             manifest-build boundary, not verifier correctness
 raw/02-seed.json                 capability-derived seed observation
 raw/03-fixtures.json             serial-reference fixture build
-raw/10-k-sweep.json through raw/14-long-mixed.json
+raw/10-k-sweep.json              LOCAL_MEASURED FAILED kill-gate receipt
 manifest/observed.json
 inputs/{adapter-config,seed-plan,model-descriptor,fixture-seeds}.json
 fixtures/{k-sweep,perfect-draft,provider-floor,forced-rejection,long-mixed}.v3.json
 ~~~
+
+raw/11-perfect-draft.json through raw/14-long-mixed.json and their reports are
+intentionally absent from that run. For a future, separately committed run,
+the commands retain those four paths as the expected continuation only after
+the preceding suite verifies; a failure stops the sequence at its own receipt.
 
 ## Kill gates and interpretation
 
@@ -406,11 +430,15 @@ Stop immediately and preserve the run directory if any of these happens:
   lacks the named seed identity/non-empty context, or provenance changes;
 - any runner receipt is NOT_RUN, FAILED, not LOCAL_MEASURED, or has a case
   commit/state mismatch. Do not proceed to the next suite;
+- the recorded e71 k=4 serial_batched_state_mismatch is already such a kill
+  gate. It is not a debugging instruction or a basis for a PCSS conclusion;
+  preserve the receipt and perform no further target action for that
+  revision/configuration;
 - the sidecar would need to be touched, inputs would need to be overwritten,
   or an unchanged failed input set would need a retry.
 
-A VERIFIED target receipt establishes only the tested raw-token commit and
-full-state equivalence for that suite. It does not establish live speculative
+A verified individual case establishes only its tested raw-token commit and
+full-state equivalence for that case. It does not establish live speculative
 decode correctness, provider economics, an optimal K, speedup, mmap-versus-
 pread, unified-memory behavior, swap/page-fault behavior, Metal behavior,
 thermals, online storage behavior, or a production PCSS controller. Those
