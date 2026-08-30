@@ -39,6 +39,7 @@ constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
 constexpr const char * kPendingReferenceSchema = "pcss.llama-bridge-pending-reference/v1";
 constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
 constexpr const char * kPendingVerifySchema = "pcss.llama-bridge-pending-verify/v1";
+constexpr const char * kPendingTrajectorySchema = "pcss.llama-bridge-pending-trajectory/v1";
 constexpr const char * kProfileSchema = "pcss.llama-bridge-profile/v1";
 constexpr const char * kPendingProfileSchema = "pcss.llama-bridge-pending-profile/v1";
 constexpr const char * kStateExport = "model-architecture+memory-state/v2";
@@ -1309,6 +1310,7 @@ HandledResponse capabilities(const Json::Object & request) {
         Json("reference_pending"),
         Json("verify"),
         Json("verify_pending"),
+        Json("trajectory_pending"),
         Json("profile"),
         Json("profile_pending"),
     });
@@ -1801,6 +1803,179 @@ HandledResponse verify_pending(const Json::Object & request) {
     return {Json(std::move(result)), successful};
 }
 
+HandledResponse trajectory_pending(const Json::Object & request) {
+    require_exact_keys(
+        request,
+        {
+            "schema_version",
+            "operation",
+            "model_artifact",
+            "llama_cpp_library",
+            "llama_cpp_revision",
+            "runtime",
+            "seed",
+            "trajectory",
+        }
+    );
+    require_request_schema(request, "trajectory_pending");
+    const RequestConfig config = parse_config(request);
+    const SeedSpec seed = parse_seed(request, false);
+    const Json::Object & trajectory = as_object(required_field(request, "trajectory"), "trajectory");
+    require_exact_keys(trajectory, {"case_id", "k", "rounds"});
+    const std::string case_id = required_string(trajectory, "case_id");
+    const std::size_t k = static_cast<std::size_t>(required_u32(trajectory, "k", 1U));
+    const Json::Array & round_specs = as_array(required_field(trajectory, "rounds"), "trajectory.rounds");
+    if (round_specs.empty() || round_specs.size() > 128U) {
+        throw BridgeError("invalid_request", "trajectory.rounds must contain between 1 and 128 rounds");
+    }
+    if (k + 1U > config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "pending trajectory batch exceeds configured n_batch");
+    }
+    const std::size_t prefix_size = seed.initial_context_tokens.size() - 1U;
+    if (prefix_size + round_specs.size() * (k + 1U) + 1U > config.runtime.n_ctx) {
+        throw BridgeError("invalid_request", "pending trajectory worst-case length exceeds configured n_ctx");
+    }
+
+    ModelRuntime runtime(config);
+    runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
+    const std::vector<llama_token> prefix_tokens(
+        seed.initial_context_tokens.begin(),
+        seed.initial_context_tokens.end() - 1
+    );
+    auto decode_prefix = [&](Context & context) {
+        if (!prefix_tokens.empty()) {
+            decode_tokens(context, prefix_tokens, 0U, false);
+        }
+    };
+    Context verifier = runtime.make_context();
+    Context reference = runtime.make_context();
+    decode_prefix(verifier);
+    decode_prefix(reference);
+    std::size_t committed_size = prefix_size;
+    llama_token pending_token = seed.initial_context_tokens.back();
+    Json::Array round_results;
+    round_results.reserve(round_specs.size());
+    bool all_rounds_match = true;
+
+    for (std::size_t round_index = 0; round_index < round_specs.size(); ++round_index) {
+        const Json::Object & round = as_object(round_specs[round_index], "trajectory.rounds[]");
+        require_exact_keys(round, {"mode", "rejection_position"});
+        const std::string mode = required_string(round, "mode");
+        const std::int64_t rejection_position = required_integer(round, "rejection_position");
+        const bool full_accept = mode == "full_accept";
+        if ((!full_accept && mode != "reject") ||
+            (full_accept && rejection_position != -1) ||
+            (!full_accept && (rejection_position < 0 || static_cast<std::size_t>(rejection_position) >= k))) {
+            throw BridgeError("invalid_request", "trajectory round mode/rejection_position is invalid");
+        }
+
+        const std::vector<std::uint8_t> round_start_state = snapshot_state(reference);
+        Context oracle = runtime.make_context();
+        restore_state(oracle, round_start_state);
+        decode_tokens(oracle, std::vector<llama_token>{pending_token}, committed_size, true);
+        const std::vector<llama_token> target_tokens = serial_greedy_tokens(
+            oracle,
+            committed_size + 1U,
+            k,
+            runtime.vocabulary_size()
+        );
+        const llama_token bonus_token = greedy_argmax(oracle, runtime.vocabulary_size());
+        std::vector<llama_token> draft_tokens = target_tokens;
+        std::size_t accepted = k;
+        llama_token next_pending = bonus_token;
+        if (!full_accept) {
+            accepted = static_cast<std::size_t>(rejection_position);
+            if (runtime.vocabulary_size() < 2) {
+                throw BridgeError("invalid_request", "forced rejection requires at least two vocabulary tokens");
+            }
+            draft_tokens[accepted] = static_cast<llama_token>(
+                (static_cast<std::int64_t>(draft_tokens[accepted]) + 1) % runtime.vocabulary_size()
+            );
+            next_pending = target_tokens[accepted];
+        }
+
+        decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
+        for (std::size_t index = 0; index < accepted; ++index) {
+            decode_tokens(
+                reference,
+                std::vector<llama_token>{target_tokens[index]},
+                committed_size + 1U + index,
+                true
+            );
+        }
+        std::vector<llama_token> verification_batch;
+        verification_batch.reserve(k + 1U);
+        verification_batch.push_back(pending_token);
+        verification_batch.insert(verification_batch.end(), draft_tokens.begin(), draft_tokens.end());
+        decode_one_batch_with_all_logits(verifier, verification_batch, committed_size);
+        llama_synchronize(verifier.raw());
+        const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
+        const bool tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
+        if (!tail_trimmed) {
+            throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a pending trajectory tail");
+        }
+        const std::vector<std::uint8_t> verifier_state = snapshot_state(verifier);
+        const std::vector<std::uint8_t> reference_state = snapshot_state(reference);
+        const bool state_matches = verifier_state == reference_state;
+
+        Json::Object round_result;
+        round_result["round"] = Json(static_cast<std::int64_t>(round_index));
+        round_result["mode"] = Json(mode);
+        round_result["rejection_position"] = Json(rejection_position);
+        round_result["accepted_draft_tokens"] = Json(static_cast<std::int64_t>(accepted));
+        round_result["pending_token"] = Json(static_cast<std::int64_t>(next_pending));
+        round_result["tail_trimmed"] = Json(tail_trimmed);
+        round_result["state_matches"] = Json(state_matches);
+        round_result["verifier_state_sha256"] = Json(sha256_hex(verifier_state));
+        round_result["reference_state_sha256"] = Json(sha256_hex(reference_state));
+        round_result["state_bytes"] = Json(static_cast<std::int64_t>(verifier_state.size()));
+        round_results.emplace_back(Json(std::move(round_result)));
+        if (!state_matches) {
+            all_rounds_match = false;
+            break;
+        }
+        committed_size += 1U + accepted;
+        pending_token = next_pending;
+    }
+
+    bool final_state_matches = false;
+    bool continuation_matches = false;
+    Json final_next_token(nullptr);
+    if (all_rounds_match && round_results.size() == round_specs.size()) {
+        decode_tokens(verifier, std::vector<llama_token>{pending_token}, committed_size, true);
+        decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
+        const std::vector<std::uint8_t> verifier_final_state = snapshot_state(verifier);
+        const std::vector<std::uint8_t> reference_final_state = snapshot_state(reference);
+        final_state_matches = verifier_final_state == reference_final_state;
+        const llama_token verifier_next = greedy_argmax(verifier, runtime.vocabulary_size());
+        const llama_token reference_next = greedy_argmax(reference, runtime.vocabulary_size());
+        continuation_matches = verifier_next == reference_next;
+        final_next_token = Json(static_cast<std::int64_t>(verifier_next));
+    }
+    const bool successful = all_rounds_match && final_state_matches && continuation_matches;
+    Json::Object result = result_base(
+        kPendingTrajectorySchema,
+        "trajectory_pending",
+        successful ? "ok" : "mismatch"
+    );
+    result["case_id"] = Json(case_id);
+    result["seed_id"] = Json(seed.seed_id);
+    result["k"] = Json(static_cast<std::int64_t>(k));
+    result["rounds_requested"] = Json(static_cast<std::int64_t>(round_specs.size()));
+    result["rounds_completed"] = Json(static_cast<std::int64_t>(round_results.size()));
+    result["rounds"] = Json(std::move(round_results));
+    result["all_rounds_match"] = Json(all_rounds_match);
+    result["final_state_matches"] = Json(final_state_matches);
+    result["continuation_matches"] = Json(continuation_matches);
+    result["final_next_token"] = std::move(final_next_token);
+    result["state_export"] = Json(kStateExport);
+    result["state_api"] = Json(kStateApi);
+    result["configuration"] = runtime_echo(config);
+    result["observed_context"] = observed_context(verifier);
+    result["claim_boundary"] = Json("exact-state correctness trajectory only; no performance measurement");
+    return {Json(std::move(result)), successful};
+}
+
 std::vector<std::uint32_t> required_k_values(const Json::Object & profile) {
     const Json::Array & values = as_array(required_field(profile, "k_values"), "profile.k_values");
     if (values.empty()) {
@@ -2222,6 +2397,9 @@ HandledResponse handle_request(const Json & request, const char * expected_opera
     if (operation == "verify_pending") {
         return verify_pending(object);
     }
+    if (operation == "trajectory_pending") {
+        return trajectory_pending(object);
+    }
     if (operation == "profile") {
         return profile(object);
     }
@@ -2253,7 +2431,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argc != 2) {
         throw BridgeError(
             "invalid_invocation",
-            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
+            "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, or --pcss-profile-pending"
         );
     }
     const std::string argument(argv[1]);
@@ -2272,6 +2450,9 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-verify-pending-case") {
         return "verify_pending";
     }
+    if (argument == "--pcss-trajectory-pending") {
+        return "trajectory_pending";
+    }
     if (argument == "--pcss-profile") {
         return "profile";
     }
@@ -2280,7 +2461,7 @@ const char * operation_from_argv(int argc, char ** argv) {
     }
     throw BridgeError(
         "invalid_invocation",
-        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-profile, or --pcss-profile-pending"
+        "use exactly one operation guard: --pcss-capabilities, --pcss-reference, --pcss-reference-pending, --pcss-verify-case, --pcss-verify-pending-case, --pcss-trajectory-pending, --pcss-profile, or --pcss-profile-pending"
     );
 }
 

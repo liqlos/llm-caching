@@ -331,6 +331,7 @@ def _validate_capability_response(response: Mapping[str, Any], config: BridgeCon
             "reference_pending",
             "verify",
             "verify_pending",
+            "trajectory_pending",
             "profile",
             "profile_pending",
         ),
