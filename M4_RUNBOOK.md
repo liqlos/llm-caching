@@ -172,6 +172,14 @@ production decode integration or a general PCSS speedup claim.
   microseconds. This is an external sealed-archive plus isolated-bridge harness,
   not a llama.cpp provider hook, end-to-end request measurement, representative
   workload result, or production decode integration.
+- The same sealed archive's edited-request all-miss floor is separately
+  `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
+  throughout preflight, warmup, and measurement; no target verification was
+  invoked. Its warm lookup cost was `26.762` microseconds per call, clustered
+  95% CI `[22.866, 31.081]` microseconds (`raw/40-edited-miss-lookup-profile.json`,
+  SHA-256 `5aa453149edada07f46da6baca25a659fd7b782c8ab2ffca29e97ec3a0fa0b98`).
+  This is the exact-prompt abstention microprofile only, not a serial-fallback
+  latency, cold-I/O measurement, or production provider guarantee.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
