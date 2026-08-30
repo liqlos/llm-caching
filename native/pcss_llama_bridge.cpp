@@ -1969,12 +1969,20 @@ HandledResponse trajectory_pending(const Json::Object & request) {
             // that rejected token, so they are not comparable to the serial
             // oracle.  The accepted prefix plus correction (or all drafts and
             // bonus on full acceptance) is the authoritative verification span.
-            const std::size_t authoritative_target_count = accepted < k ? accepted + 1U : k + 1U;
-            verification_targets_match = std::equal(
-                verification_tokens.begin(),
-                verification_tokens.begin() + static_cast<std::ptrdiff_t>(authoritative_target_count),
-                target_tokens.begin()
-            );
+            if (accepted < k) {
+                const std::size_t authoritative_target_count = accepted + 1U;
+                verification_targets_match = std::equal(
+                    verification_tokens.begin(),
+                    verification_tokens.begin() + static_cast<std::ptrdiff_t>(authoritative_target_count),
+                    target_tokens.begin()
+                );
+            } else {
+                verification_targets_match = std::equal(
+                    verification_tokens.begin(),
+                    verification_tokens.begin() + static_cast<std::ptrdiff_t>(k),
+                    target_tokens.begin()
+                ) && verification_tokens[k] == bonus_token;
+            }
             decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
             for (std::size_t index = 0; index < accepted; ++index) {
                 decode_tokens(
