@@ -345,7 +345,8 @@ def _authorize_target_backend(
         raise ContractError("runner-computed adapter/backend/model binding differs from manifest.verifier_gate")
     if manifest["model_artifact"]["sha256"] != observed_binding["model_artifact_sha256"]:
         raise ContractError("runner-computed model hash differs from manifest.model_artifact.sha256")
-    if manifest["llama_cpp"]["fingerprint"] != observed_binding["llama_cpp_build_fingerprint"]:
+    llama_cpp_parameters = require_mapping(manifest["llama_cpp"]["parameters"], "manifest.llama_cpp.parameters")
+    if llama_cpp_parameters["llama_cpp_build_fingerprint"] != observed_binding["llama_cpp_build_fingerprint"]:
         raise ContractError("target adapter llama.cpp build fingerprint differs from manifest.llama_cpp")
     return TargetExecutionPermit(
         adapter_name=require_string(adapter.name, "adapter.name"),

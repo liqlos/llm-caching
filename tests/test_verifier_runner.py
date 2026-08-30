@@ -7,8 +7,8 @@ import pytest
 
 from pcss import verifier_runner
 from pcss.canonical import ContractError
-from pcss.verifier import AdapterAvailability, ScriptedFixtureAdapter, VerifierCase, fixture_state_digest
-from pcss.verifier_runner import _require_fixture_target_compatibility, execute_suite, load_cases
+from pcss.verifier import AdapterAvailability, ScriptedFixtureAdapter, TargetHostIdentity, VerifierCase, fixture_state_digest
+from pcss.verifier_runner import _authorize_target_backend, _require_fixture_target_compatibility, execute_suite, load_cases
 
 
 def unfilled_manifest() -> dict:
@@ -186,6 +186,54 @@ def test_target_host_rejects_unverified_product_class_or_inconsistent_identifier
 
     with pytest.raises(ContractError, match=message):
         verifier_runner.observe_target_host()
+
+
+class NamedAdapter:
+    name = "target-adapter"
+
+
+def _target_authorization_inputs() -> tuple[TargetHostIdentity, dict[str, str], dict]:
+    host = TargetHostIdentity.from_observed(
+        target_profile="contract-test",
+        operating_system="Darwin",
+        architecture="arm64",
+        hardware_model="Mac16,8",
+        chip="Apple M4 Pro",
+        memory_bytes=24 * 1024**3,
+    )
+    binding = {
+        "schema_version": "pcss.verifier-adapter-binding/v2",
+        "adapter_source_sha256": "a" * 64,
+        "backend_binary_sha256": "b" * 64,
+        "model_artifact_sha256": "c" * 64,
+        "llama_cpp_build_fingerprint": "d" * 64,
+        "runtime_configuration_fingerprint": "e" * 64,
+    }
+    manifest = {
+        "verifier_gate": {"host_identity": host.as_dict(), "adapter_binding": binding},
+        "model_artifact": {"sha256": binding["model_artifact_sha256"]},
+        "llama_cpp": {
+            "fingerprint": "f" * 64,
+            "parameters": {"llama_cpp_build_fingerprint": binding["llama_cpp_build_fingerprint"]},
+        },
+    }
+    return host, binding, manifest
+
+
+def test_target_authorization_compares_the_explicit_llama_cpp_build_field() -> None:
+    host, binding, manifest = _target_authorization_inputs()
+
+    permit = _authorize_target_backend(NamedAdapter(), manifest, host, binding)
+
+    assert permit.adapter_name == "target-adapter"
+
+
+def test_target_authorization_rejects_a_different_explicit_llama_cpp_build_field() -> None:
+    host, binding, manifest = _target_authorization_inputs()
+    manifest["llama_cpp"]["parameters"]["llama_cpp_build_fingerprint"] = "0" * 64
+
+    with pytest.raises(ContractError, match="llama.cpp build fingerprint"):
+        _authorize_target_backend(NamedAdapter(), manifest, host, binding)
 
 
 class SelfDeclaredTargetAdapter:
