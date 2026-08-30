@@ -106,6 +106,18 @@ production decode integration or a general PCSS speedup claim.
   This causally supersedes the negative K=2 implementation result, but its claim
   remains controlled exact-repeat decode-only: provider lookup, prefill/restore,
   misses/rejections, and thermal sustainability are excluded.
+- A broader persistent exact-repeat ceiling then reproduced the K=2 benefit on
+  twelve independent visible Qwen3-8B outputs. The derived cross-session trace
+  is a `SIMULATOR` control, not new generation (trace SHA-256
+  `354818cf22da43cd2e4594afc21c470b4f9632da23629e3664f7a1a4684de12c`), and
+  the M4 decode receipt is `LOCAL_MEASURED CONTROLLED_LIVE_DECODE_POSITIVE`:
+  all twelve output/state comparisons exact, all 256 proposed tokens per case
+  accepted, zero checkpoints/reconstructions, paired ratio `1.077900`,
+  clustered 95% CI `[1.049214, 1.106023]` (raw SHA-256
+  `e0be4b0b6db49326a33fc46c7fa694d4dc3b8afc394765924979da64f13e25e6`).
+  This establishes only the decode-only ceiling after an exact persistent
+  archive hit is already available; it excludes lookup, provider, prefill,
+  restore, misses, and thermal effects.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
