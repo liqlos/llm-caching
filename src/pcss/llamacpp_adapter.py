@@ -560,7 +560,10 @@ def _validate_verify_response(
         expected_fields = _PENDING_VERIFY_RESPONSE_FIELDS
         expected_schema = PENDING_VERIFY_SCHEMA_VERSION
         expected_operation = "verify_pending"
-        expected_reconstruction = "pending-anchor+batch-score+native-tail-trim/v1"
+        expected_reconstruction = {
+            "pending-anchor+batch-score+native-tail-trim/v1",
+            "pending-anchor+batch-score+serial-state-fallback/v2",
+        }
     else:
         raise ContractError("unsupported llama.cpp verifier commit protocol")
     _require_exact_keys(response, expected_fields, field)
@@ -569,7 +572,11 @@ def _validate_verify_response(
     if response["status"] not in {"ok", "mismatch"}:
         raise ContractError(f"{field} has an unsupported status")
     _validate_shared_response_facts(response, config, field)
-    if response["reconstruction"] != expected_reconstruction:
+    if (
+        response["reconstruction"] not in expected_reconstruction
+        if isinstance(expected_reconstruction, set)
+        else response["reconstruction"] != expected_reconstruction
+    ):
         raise ContractError(f"{field} has an unsupported reconstruction method")
     if response["tokenization_boundary"] != "caller-supplied-raw-token-ids/v1":
         raise ContractError(f"{field} has an unexpected tokenization boundary")
@@ -691,8 +698,11 @@ def _validate_verify_response(
             response["reference_pending_state_bytes"], f"{field}.reference_pending_state_bytes", minimum=1
         )
         pending_matches = _require_bool(response["pending_state_matches"], f"{field}.pending_state_matches")
-        if not _require_bool(response["tail_trimmed"], f"{field}.tail_trimmed"):
+        tail_trimmed = _require_bool(response["tail_trimmed"], f"{field}.tail_trimmed")
+        if response["reconstruction"] == "pending-anchor+batch-score+native-tail-trim/v1" and not tail_trimmed:
             raise ContractError(f"{field} did not trim the rejected verification tail")
+        if response["reconstruction"] == "pending-anchor+batch-score+serial-state-fallback/v2" and tail_trimmed:
+            raise ContractError(f"{field} contradicts its serial-state fallback")
         if pending_matches != (
             pending_digest == reference_pending_digest and pending_bytes == reference_pending_bytes
         ):

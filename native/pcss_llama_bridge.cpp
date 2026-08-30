@@ -1715,10 +1715,26 @@ HandledResponse verify_pending(const Json::Object & request) {
     );
 
     llama_synchronize(verifier.raw());
-    const llama_pos trim_from = static_cast<llama_pos>(prefix_size + 1U + accepted);
-    const bool tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
-    if (!tail_trimmed) {
-        throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove the rejected verification tail");
+    bool tail_trimmed = false;
+    std::string reconstruction = "pending-anchor+batch-score+native-tail-trim/v1";
+    if (accepted > 2U) {
+        restore_state(verifier, prompt_state);
+        decode_tokens(verifier, std::vector<llama_token>{anchor_token}, prefix_size, true);
+        for (std::size_t index = 0; index < accepted; ++index) {
+            decode_tokens(
+                verifier,
+                std::vector<llama_token>{draft_tokens[index]},
+                prefix_size + 1U + index,
+                true
+            );
+        }
+        reconstruction = "pending-anchor+batch-score+serial-state-fallback/v2";
+    } else {
+        const llama_pos trim_from = static_cast<llama_pos>(prefix_size + 1U + accepted);
+        tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
+        if (!tail_trimmed) {
+            throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove the rejected verification tail");
+        }
     }
     const std::vector<std::uint8_t> pending_state = snapshot_state(verifier);
 
@@ -1757,7 +1773,7 @@ HandledResponse verify_pending(const Json::Object & request) {
     result["generation_mode"] = Json("greedy_argmax");
     result["greedy_tie_break"] = Json("lowest-token-id/v1");
     result["state_export"] = Json(kStateExport);
-    result["reconstruction"] = Json("pending-anchor+batch-score+native-tail-trim/v1");
+    result["reconstruction"] = Json(reconstruction);
     result["seed_id"] = Json(seed.seed_id);
     result["case_id"] = Json(case_id);
     result["target_tokens"] = token_array(target_tokens);
@@ -2449,6 +2465,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         std::size_t accepted = 0U;
         std::size_t verification_rounds = 0U;
         std::size_t serial_fallback_steps = 0U;
+        std::size_t serial_state_reconstruction_rounds = 0U;
         std::size_t reanchor_attempts = 0U;
         std::size_t reanchor_successes = 0U;
     };
@@ -2520,6 +2537,7 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                     candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor),
                     candidate_tokens.begin() + static_cast<std::ptrdiff_t>(source_cursor + draft_count)
                 );
+                const std::vector<std::uint8_t> pre_verification_state = snapshot_state(context);
                 decode_one_batch_with_all_logits(context, batch, committed_size);
                 std::vector<llama_token> targets;
                 targets.reserve(batch.size());
@@ -2536,9 +2554,23 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                 run.accepted += accepted;
                 ++run.verification_rounds;
                 llama_synchronize(context.raw());
-                const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
-                if (!llama_memory_seq_rm(llama_get_memory(context.raw()), 0, trim_from, -1)) {
-                    throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a live benchmark tail");
+                if (accepted > 2U) {
+                    restore_state(context, pre_verification_state);
+                    decode_tokens(context, std::vector<llama_token>{pending}, committed_size, true);
+                    for (std::size_t index = 0; index < accepted; ++index) {
+                        decode_tokens(
+                            context,
+                            std::vector<llama_token>{batch[index + 1U]},
+                            committed_size + 1U + index,
+                            true
+                        );
+                    }
+                    ++run.serial_state_reconstruction_rounds;
+                } else {
+                    const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
+                    if (!llama_memory_seq_rm(llama_get_memory(context.raw()), 0, trim_from, -1)) {
+                        throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a live benchmark tail");
+                    }
                 }
                 for (std::size_t index = 0; index < accepted; ++index) {
                     run.emitted.push_back(batch[index + 1U]);
@@ -2611,6 +2643,9 @@ HandledResponse benchmark_pending(const Json::Object & request) {
         row["accepted_tokens"] = Json(static_cast<std::int64_t>(speculative.accepted));
         row["verification_rounds"] = Json(static_cast<std::int64_t>(speculative.verification_rounds));
         row["serial_fallback_steps"] = Json(static_cast<std::int64_t>(speculative.serial_fallback_steps));
+        row["serial_state_reconstruction_rounds"] = Json(
+            static_cast<std::int64_t>(speculative.serial_state_reconstruction_rounds)
+        );
         row["reanchor_attempts"] = Json(static_cast<std::int64_t>(speculative.reanchor_attempts));
         row["reanchor_successes"] = Json(static_cast<std::int64_t>(speculative.reanchor_successes));
         measurements.emplace_back(Json(std::move(row)));

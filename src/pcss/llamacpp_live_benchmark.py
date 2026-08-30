@@ -49,6 +49,7 @@ _RESPONSE_FIELDS = {
 _MEASUREMENT_FIELDS = {
     "iteration", "serial_before_ns", "candidate_decode_ns", "serial_after_ns", "proposed_tokens",
     "accepted_tokens", "verification_rounds", "serial_fallback_steps",
+    "serial_state_reconstruction_rounds",
     "reanchor_attempts", "reanchor_successes",
 }
 _FINGERPRINT_FIELDS = (
@@ -235,6 +236,7 @@ def _validate_response(
             _positive_int(row[field], f"benchmark measurement.{field}")
         for field in (
             "proposed_tokens", "accepted_tokens", "verification_rounds", "serial_fallback_steps",
+            "serial_state_reconstruction_rounds",
             "reanchor_attempts", "reanchor_successes",
         ):
             require_int(row[field], f"benchmark measurement.{field}", minimum=0)

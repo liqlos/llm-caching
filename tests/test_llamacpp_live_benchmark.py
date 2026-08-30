@@ -55,6 +55,7 @@ def response_for(request: dict) -> dict:
             "accepted_tokens": 3,
             "verification_rounds": 2,
             "serial_fallback_steps": 1,
+            "serial_state_reconstruction_rounds": 0,
             "reanchor_attempts": 1,
             "reanchor_successes": 1,
         }

@@ -642,6 +642,33 @@ def test_pending_native_adapter_uses_explicit_operation_and_validates_pending_st
     assert calls[1]["request"]["operation"] == "verify_pending"
 
 
+def test_pending_native_adapter_accepts_explicit_serial_state_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    adapter = LlamaCppBridgeAdapter(
+        environment={"PCSS_LLAMACPP_CONFIG": str(tmp_path / "llamacpp-config.json")},
+        commit_protocol="pending_native",
+    )
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(
+            library,
+            model,
+            operations=["capabilities", "reference", "verify", "verify_pending", "profile"],
+        ),
+        verify_response=_pending_verify_response(
+            library,
+            model,
+            reconstruction="pending-anchor+batch-score+serial-state-fallback/v2",
+            tail_trimmed=False,
+        ),
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    assert adapter.verify(_case()).reconstruction_matches
+
+
 def test_pending_native_adapter_rejects_false_pending_state_claim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
