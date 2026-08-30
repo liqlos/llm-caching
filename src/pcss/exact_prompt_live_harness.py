@@ -134,9 +134,13 @@ def run_exact_prompt_live_harness(
     for pair_spec in pairs:
         source, target = _pair(records, pair_spec, pair_mode="exact_repeat")
         for _ in range(warmup_repetitions):
-            _, _, provider, request, proposal = _candidate_from_archive(archive, source, target, output_tokens=output_tokens)
-            provider.feedback(request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
-            provider.end_request(request.request_id)
+            _, _, provider, provider_request, proposal = _candidate_from_archive(
+                archive, source, target, output_tokens=output_tokens
+            )
+            provider.feedback(
+                provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None)
+            )
+            provider.end_request(provider_request.request_id)
         candidates_and_times = [
             _candidate_from_archive(archive, source, target, output_tokens=output_tokens)
             for _ in range(measurement_repetitions)
@@ -166,9 +170,11 @@ def run_exact_prompt_live_harness(
                 "lookup_inclusive_candidate_ns": combined_candidate_ns,
             })
         provider_telemetry: list[dict[str, Any]] = []
-        for _, _, provider, request, proposal in candidates_and_times:
-            provider.feedback(request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
-            provider.end_request(request.request_id)
+        for _, _, provider, provider_request, proposal in candidates_and_times:
+            provider.feedback(
+                provider_request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None)
+            )
+            provider.end_request(provider_request.request_id)
             provider_telemetry.extend(
                 {"event": event.event, "request_id": event.request_id, "at_ns": event.at_ns, **event.payload}
                 for event in provider.telemetry
