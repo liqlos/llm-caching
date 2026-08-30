@@ -1,7 +1,9 @@
 # M4 verifier runbook — Qwen3-8B Q4_K_M
 
-This is the target-only correctness and isolated verifier-profile procedure for
-one fixed Qwen3-8B GGUF configuration. It does not attach PCSS to live decoding.
+This is the target correctness, isolated verifier-profile, controlled
+live-decode, and edit-protocol procedure for one fixed Qwen3-8B GGUF
+configuration. Live measurements below are bounded research harnesses, not a
+production decode integration or a general PCSS speedup claim.
 
 ## Current status
 
@@ -61,6 +63,43 @@ one fixed Qwen3-8B GGUF configuration. It does not attach PCSS to live decoding.
   Batch-only K=16 and K=32 rooflines do not override this gate because the
   current bridge must serially reconstruct all committed tokens after batch
   verification.
+- The serial-canonical no-go does not apply to the later pending-token protocol.
+  That path was byte-exact for K=2. K>=3 still fails the raw serialized-state
+  gate and remains prohibited for live claims under this llama.cpp build.
+- The controlled exact-repeat live run at
+  `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
+  revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
+  `raw/10-controlled-live.json` (SHA-256
+  `83ecbfeb605234601b9cdbca6ad2438d36b0c2cd4c72edaf870d2e12d4cac3a0`)
+  is `LOCAL_MEASURED CONTROLLED_LIVE_DECODE_POSITIVE`: three independent
+  48-token exact-repeat clusters, K=2, all output/state exact, paired
+  serial-over-candidate decode ratio 1.130338 with clustered 95% CI
+  [1.128577, 1.132274]. Prefill, restore, and provider lookup are excluded.
+- The edited-source trace receipt at
+  `/Users/ai-server/Projects/pcss-artifacts/runs/source-edit-traces-ee95c02/raw/00-trace-generation.json`
+  has SHA-256 `6a7345a06f6d538dee75103a1c2b45131bec358b066d3c3a13d2674527d39810`.
+  It contains three source/edited-target pairs from the same Qwen3-8B protocol
+  with hidden reasoning excluded.
+- Source reuse without re-anchor at revision
+  `ee95c0203eee2545d19fcea322ac482339a2de08` preserved exact output/state but
+  was inconclusive: ratio 1.018248, 95% CI [0.985840, 1.049419]. Raw SHA-256:
+  `56abcc507d4bbf284be81cfc7ca5a03d0f7e2106277f5ec4e11e455014e26bc5`.
+- Monotonic four-token re-anchor at revision
+  `b2ae25b629eae34febba03a1f6abaad59cc19dc2` also preserved exact output/state
+  but was inconclusive: ratio 1.017299, 95% CI [0.989590, 1.049455]. It found a
+  later source cursor in JSON and TypeScript but did not establish aggregate
+  wall-clock benefit. Raw SHA-256:
+  `8a837909706fe20686cfcc90f1e203a960f749392939a6feb3765213f042f5fa`.
+- The offline protocol bakeoff at revision
+  `987c19ec532036abf2cf72c448b85795a31d2ff4` is `SIMULATOR VERIFIED_OFFLINE`.
+  The exact patch representation covered 42.36% of output tokens, current-source
+  reuse/re-anchor covered 31.25%, and persistent cross-session PCSS received
+  zero unique credit after the stronger source tier. This is an oracle protocol
+  comparison, not online patch generation or speedup. Raw SHA-256:
+  `75e7bb0215b023d4cf0d3cb33f5e0fd82a503f0da2a4dcf7ff4061026d3bf08b`.
+- Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
+  benchmark receipt. They failed closed on response-contract validation and
+  must not be reported as performance results.
 - Do not stop, restart, reconfigure, or share resources with the existing
   persona-rag sidecar. PCSS runs only from the dedicated paths below.
 
@@ -69,6 +108,58 @@ this model artifact, raw-token protocol, runtime configuration, and exercised
 cases. It cannot select a profitable K or transfer a throughput, acceptance,
 memory, Metal, thermal, or speedup conclusion to Qwen3.8-27B or another
 backend/quantization.
+
+## Controlled pending-token commands
+
+These command shapes produced the immutable receipts above. They require a
+fresh config/manifest bound to the exact bridge binary and a fresh output root.
+Do not overwrite an existing root.
+
+~~~sh
+PYTHONPATH="$PCSS_REPO/src" "$PCSS_PYTHON" -m pcss.llamacpp_live_benchmark \
+  --config "$PCSS_CONFIG" \
+  --manifest "$PCSS_RUN_ROOT/manifest/observed.json" \
+  --trace "$PCSS_TRACE" \
+  --pair clamp-history:clamp-repeat-target \
+  --pair json-history:json-repeat-target \
+  --pair typescript-history:typescript-repeat-target \
+  --pair-mode exact_repeat \
+  --k 2 --output-tokens 48 \
+  --warmup-repetitions 2 --measurement-repetitions 8 \
+  --output "$PCSS_RUN_ROOT/raw/10-controlled-live.json" \
+  --report "$PCSS_RUN_ROOT/reports/10-controlled-live.md" \
+  --repository-root "$PCSS_REPO"
+
+PYTHONPATH="$PCSS_REPO/src" "$PCSS_PYTHON" -m pcss.llamacpp_live_benchmark \
+  --config "$PCSS_CONFIG" \
+  --manifest "$PCSS_RUN_ROOT/manifest/observed.json" \
+  --trace "$PCSS_EDIT_TRACE" \
+  --pair clamp-source:clamp-edited-target \
+  --pair json-source:json-edited-target \
+  --pair typescript-source:typescript-edited-target \
+  --pair-mode source_reuse --reanchor-min-tokens 4 \
+  --k 2 --output-tokens 48 \
+  --warmup-repetitions 2 --measurement-repetitions 8 \
+  --output "$PCSS_RUN_ROOT/raw/10-source-reanchor-live.json" \
+  --report "$PCSS_RUN_ROOT/reports/10-source-reanchor-live.md" \
+  --repository-root "$PCSS_REPO"
+
+PYTHONPATH="$PCSS_REPO/src" "$PCSS_PYTHON" -m pcss.protocol_bakeoff \
+  --trace "$PCSS_EDIT_TRACE" \
+  --pair clamp-source:clamp-edited-target \
+  --pair json-source:json-edited-target \
+  --pair typescript-source:typescript-edited-target \
+  --max-continuation 32 \
+  --output "$PCSS_RUN_ROOT/raw/20-protocol-bakeoff.json" \
+  --report "$PCSS_RUN_ROOT/reports/20-protocol-bakeoff.md" \
+  --repository-root "$PCSS_REPO"
+~~~
+
+Kill gates remain fail-closed: any output/state mismatch, K>2 under the current
+pending protocol, a confidence interval crossing the declared benefit margin,
+or changed model/runtime/trace fingerprints blocks a runtime claim. Do not
+infer end-to-end gain until provider lookup is inside the timed live path and a
+representative workload clears its clustered confidence gate.
 
 ## Boundary and generated contracts
 
