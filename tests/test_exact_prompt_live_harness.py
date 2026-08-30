@@ -9,6 +9,7 @@ from pcss.canonical import ContractError
 from pcss.exact_prompt_archive import build_exact_prompt_archive
 from pcss.exact_prompt_live_harness import _candidate_from_archive
 from pcss.exact_repeat_trace import derive_exact_repeat_records
+from pcss.provider import Feedback
 
 
 ROOT = Path(__file__).parents[1]
@@ -20,11 +21,15 @@ def test_archive_candidate_binds_exact_prompt_and_source_provenance(tmp_path: Pa
     source, target = derive_exact_repeat_records([source])
     archive = build_exact_prompt_archive(tmp_path / "archive", [source])
 
-    candidate, elapsed = _candidate_from_archive(
-        archive, target, expected_source_record_id=source["record_id"], output_tokens=2
+    candidate, elapsed, provider, request, proposal = _candidate_from_archive(
+        archive, source, target, output_tokens=2
     )
     assert candidate == tuple(target["content"]["committed_token_ids"][:2])
     assert elapsed > 0
+    provider.feedback(request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
+    provider.end_request(request.request_id)
 
-    with pytest.raises(ContractError, match="provenance"):
-        _candidate_from_archive(archive, target, expected_source_record_id="other", output_tokens=2)
+    other = json.loads(json.dumps(source))
+    other["record_id"] = "other-source"
+    with pytest.raises(ContractError, match="abstained"):
+        _candidate_from_archive(archive, other, target, output_tokens=2)

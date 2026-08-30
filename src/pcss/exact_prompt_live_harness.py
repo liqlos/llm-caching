@@ -14,16 +14,18 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 from statistics import fmean
-from time import perf_counter_ns
+from time import monotonic_ns, perf_counter_ns
 from typing import Any, Callable, Mapping, Sequence
 
 from .canonical import ContractError, canonical_json
 from .exact_prompt_archive import ExactPromptArchive, open_exact_prompt_archive
+from .exact_prompt_provider import ExactPromptArchiveShadowProvider, ExactPromptDescriptor
 from .llamacpp_fixture_builder import BridgeConfig, load_bridge_config
 from .llamacpp_live_benchmark import _pair, _request, _run_bridge, _validate_response
 from .manifest import validate_manifest
 from .metrics import clustered_bootstrap_ci
 from .offline_runner import load_trace_fixture
+from .provider import Feedback, Fingerprints, Proposal, RequestContext, TrustedScope
 from .results import (
     ResultReceipt,
     file_sha256,
@@ -37,26 +39,56 @@ from .verifier import TargetHostIdentity
 from .verifier_runner import observe_target_host
 
 
+def _fingerprints(record: Mapping[str, Any]) -> Fingerprints:
+    return Fingerprints(
+        model=record["model_fingerprint"], tokenizer=record["tokenizer_fingerprint"],
+        chat_template=record["chat_template_fingerprint"],
+        generation_protocol=record["generation_protocol_fingerprint"],
+    )
+
+
+def _scope(record: Mapping[str, Any], *, widening_level: int) -> TrustedScope:
+    trusted = record["trusted_scope"]
+    lineage = record["artifact_lineage"]
+    return TrustedScope(
+        principal_namespace=trusted["principal_namespace"], application=trusted["application_id"] or "unknown",
+        repository=trusted["repository_id"], revision_family=lineage["revision_family"],
+        operation_class=trusted["workflow_stage"] or "unknown", workflow_block=trusted["semantic_block_id"],
+        schema_or_tool_version=record["generation_protocol"]["schema_or_tool_version"], widening_level=widening_level,
+    )
+
+
 def _candidate_from_archive(
     archive: ExactPromptArchive,
+    source: Mapping[str, Any],
     target: Mapping[str, Any],
     *,
-    expected_source_record_id: str,
     output_tokens: int,
-) -> tuple[tuple[int, ...], int]:
+) -> tuple[tuple[int, ...], int, ExactPromptArchiveShadowProvider, RequestContext, Proposal]:
     prompt = tuple(target["content"]["prompt_token_ids"])
+    fingerprints = _fingerprints(target)
+    scope = _scope(target, widening_level=1)
+    descriptor = ExactPromptDescriptor(
+        tail_tokens=prompt, source_record_id=source["record_id"], source_class="same_repository",
+        scope=scope, fingerprints=fingerprints, provenance_family=source["source"]["provenance_family"],
+        matched_suffix_tokens=len(prompt),
+    )
+    provider = ExactPromptArchiveShadowProvider(archive, (descriptor,))
+    request = RequestContext(
+        request_id=target["request_id"], fingerprints=fingerprints, scope=scope,
+        source_tiers=("same_repository",), deadline_ns=monotonic_ns() + 60_000_000_000,
+        probe_budget=1,
+    )
     started = perf_counter_ns()
-    hits = archive.lookup(prompt)
-    if len(hits) != 1:
-        raise ContractError("exact-prompt archive must return exactly one unambiguous hit")
-    hit = hits[0]
-    candidate = hit.cursor.read(output_tokens)
+    provider.begin_request(request)
+    proposal = provider.propose(request.request_id, tail_tokens=prompt, max_tokens=output_tokens, deadline_ns=request.deadline_ns)
     elapsed = perf_counter_ns() - started
-    if hit.record_id != expected_source_record_id:
-        raise ContractError("exact-prompt archive hit does not preserve selected source provenance")
+    if not isinstance(proposal, Proposal):
+        raise ContractError("exact-prompt archive provider abstained during a required exact hit")
+    candidate = proposal.tokens
     if len(candidate) != output_tokens:
         raise ContractError("exact-prompt archive cursor is shorter than the requested output")
-    return candidate, elapsed
+    return candidate, elapsed, provider, request, proposal
 
 
 def run_exact_prompt_live_harness(
@@ -102,13 +134,15 @@ def run_exact_prompt_live_harness(
     for pair_spec in pairs:
         source, target = _pair(records, pair_spec, pair_mode="exact_repeat")
         for _ in range(warmup_repetitions):
-            _candidate_from_archive(archive, target, expected_source_record_id=source["record_id"], output_tokens=output_tokens)
+            _, _, provider, request, proposal = _candidate_from_archive(archive, source, target, output_tokens=output_tokens)
+            provider.feedback(request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
+            provider.end_request(request.request_id)
         candidates_and_times = [
-            _candidate_from_archive(archive, target, expected_source_record_id=source["record_id"], output_tokens=output_tokens)
+            _candidate_from_archive(archive, source, target, output_tokens=output_tokens)
             for _ in range(measurement_repetitions)
         ]
         candidate = candidates_and_times[0][0]
-        if any(tokens != candidate for tokens, _ in candidates_and_times):
+        if any(item[0] != candidate for item in candidates_and_times):
             raise ContractError("exact-prompt archive lookup is not deterministic across measurements")
         request = _request(
             config, source, target, k=k, output_tokens=output_tokens,
@@ -119,7 +153,7 @@ def run_exact_prompt_live_harness(
             bridge_runner(config, request), request, config,
             expected_authoritative_tokens=target["content"]["committed_token_ids"],
         )
-        lookup_times = [elapsed for _, elapsed in candidates_and_times]
+        lookup_times = [item[1] for item in candidates_and_times]
         ratios: list[float] = []
         combined_rows: list[dict[str, Any]] = []
         for row, lookup_ns in zip(response["measurements"], lookup_times, strict=True):
@@ -131,12 +165,21 @@ def run_exact_prompt_live_harness(
                 "bridge_candidate_decode_ns": row["candidate_decode_ns"],
                 "lookup_inclusive_candidate_ns": combined_candidate_ns,
             })
+        provider_telemetry: list[dict[str, Any]] = []
+        for _, _, provider, request, proposal in candidates_and_times:
+            provider.feedback(request.request_id, Feedback(proposal.proposal_id, "not_verified", 0, (), None, None))
+            provider.end_request(request.request_id)
+            provider_telemetry.extend(
+                {"event": event.event, "request_id": event.request_id, "at_ns": event.at_ns, **event.payload}
+                for event in provider.telemetry
+            )
         ratios_by_request[target["request_id"]] = ratios
         request_fingerprints[response["case_id"]] = hashlib.sha256(canonical_json(request).encode()).hexdigest()
         cases.append({
             "source_record_id": source["record_id"], "target_record_id": target["record_id"],
             "request_id": target["request_id"], "response": response,
-            "archive_measurements": combined_rows, "paired_lookup_inclusive_ratio_mean": fmean(ratios),
+            "archive_measurements": combined_rows, "provider_telemetry": provider_telemetry,
+            "paired_lookup_inclusive_ratio_mean": fmean(ratios),
         })
     confidence = clustered_bootstrap_ci(ratios_by_request)
     analysis = {
