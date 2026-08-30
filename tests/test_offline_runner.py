@@ -160,6 +160,12 @@ def test_capacity_ladder_admits_active_bundle_and_reports_policy_value(tmp_path:
     assert set(summary) == set(capacity["simulations"])
     assert all("active_capture_ratio" in point for points in summary.values() for point in points)
     assert any(point["active_capture_ratio"] > 0 for points in summary.values() for point in points)
+    assert all("marginal_value_rate" in point for points in summary.values() for point in points)
+    assert all(
+        point["clustered_request_mean_active_capture_ci"] is not None
+        for points in summary.values()
+        for point in points
+    )
 
 
 def test_capacity_observation_rank_does_not_use_posthoc_acceptance() -> None:

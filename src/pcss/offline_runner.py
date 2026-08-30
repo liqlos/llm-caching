@@ -36,8 +36,10 @@ from .experiments import (
 )
 from .importer import import_jsonl
 from .metrics import (
+    CapacityValue,
     accepted_prefix_value,
     active_capture_ratio,
+    capacity_curve,
     chain_survival,
     clustered_bootstrap_ci,
     opportunity,
@@ -212,7 +214,10 @@ def _capacity_simulation(result: ReplayResult, common_archive_bytes: int) -> dic
             "selection_rule": "first admits the smallest bundle in main; maximum is a geometric point that admits every bundle across main+frontier",
         },
         "simulations": simulations,
-        "strategy_summary": _capacity_strategy_summary(simulations),
+        "strategy_summary": _capacity_strategy_summary(
+            simulations,
+            request_id_by_epoch={index: record.request_id for index, record in enumerate(result.records)},
+        ),
     }
 
 
@@ -253,12 +258,14 @@ def _persistent_candidates(
     )
 
 
-def _capacity_strategy_summary(simulations: Mapping[str, Mapping[str, Any]]) -> dict[str, list[dict[str, int | float]]]:
+def _capacity_strategy_summary(
+    simulations: Mapping[str, Mapping[str, Any]], *, request_id_by_epoch: Mapping[int, str]
+) -> dict[str, list[dict[str, Any]]]:
     """Compact value accounting for logical policies, without a runtime claim."""
 
-    summary: dict[str, list[dict[str, int | float]]] = {}
+    summary: dict[str, list[dict[str, Any]]] = {}
     for policy, simulation in sorted(simulations.items()):
-        points: list[dict[str, int | float]] = []
+        points: list[dict[str, Any]] = []
         for run in simulation["runs"]:
             totals = {
                 field: sum(outcome[field] for outcome in run["outcomes"])
@@ -271,14 +278,46 @@ def _capacity_strategy_summary(simulations: Mapping[str, Mapping[str, Any]]) -> 
             }
             total = sum(totals.values())
             active = totals["main_unique_value"] + totals["frontier_unique_value"]
+            request_capture: dict[str, list[float]] = {}
+            for outcome in run["outcomes"]:
+                outcome_total = sum(
+                    outcome[field]
+                    for field in (
+                        "main_unique_value",
+                        "frontier_unique_value",
+                        "ghost_unique_value",
+                        "inactive_unique_value",
+                    )
+                )
+                if outcome_total == 0:
+                    continue
+                request_id = request_id_by_epoch[outcome["epoch"]]
+                request_capture.setdefault(request_id, []).append(
+                    (outcome["main_unique_value"] + outcome["frontier_unique_value"]) / outcome_total
+                )
             points.append(
                 {
                     "capacity_bytes": run["capacity_bytes"],
                     **totals,
                     "total_unique_value": total,
                     "active_capture_ratio": active / total if total else 0.0,
+                    "clustered_request_mean_active_capture_ci": (
+                        _json_value(clustered_bootstrap_ci(request_capture, bootstrap_replicates=200, seed=0))
+                        if request_capture
+                        else None
+                    ),
                 }
             )
+        curve = capacity_curve(
+            CapacityValue(
+                capacity_bytes=point["capacity_bytes"],
+                practical_marginal_value=point["main_unique_value"] + point["frontier_unique_value"],
+                full_archive_oracle_marginal_value=point["total_unique_value"],
+            )
+            for point in points
+        )
+        for point, curve_point in zip(points, curve, strict=True):
+            point["marginal_value_rate"] = curve_point.marginal_value_rate
         summary[policy] = points
     return summary
 
