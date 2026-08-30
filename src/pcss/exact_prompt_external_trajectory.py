@@ -132,6 +132,15 @@ def run_external_trajectory(
     host = target_observer()
     if manifest["evidence_class"] != "LOCAL_MEASURED" or manifest["verifier_gate"]["host_identity"] != host.as_dict():
         raise ContractError("external trajectory requires matching LOCAL_MEASURED target manifest")
+    model_hash = file_sha256(config.model_artifact)
+    bridge_hash = file_sha256(config.bridge_executable)
+    binding = manifest["verifier_gate"]["adapter_binding"]
+    if manifest["model_artifact"]["sha256"] != model_hash or binding["model_artifact_sha256"] != model_hash:
+        raise ContractError("external trajectory model differs from observed manifest")
+    if binding["backend_binary_sha256"] != bridge_hash:
+        raise ContractError("external trajectory bridge differs from observed manifest")
+    if binding["runtime_configuration_fingerprint"] != config.runtime_configuration_fingerprint:
+        raise ContractError("external trajectory runtime differs from observed manifest")
     archive = open_exact_prompt_archive(archive_root)
     cases = []
     for pair_spec in pairs:
