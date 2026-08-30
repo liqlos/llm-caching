@@ -106,6 +106,7 @@ def run_exact_prompt_live_harness(
     repository_root: Path,
     command_arguments: Sequence[str],
     miss_pairs: Sequence[str] = (),
+    rejection_pairs: Sequence[str] = (),
     k: int = 2,
     output_tokens: int = 48,
     warmup_repetitions: int = 2,
@@ -113,8 +114,9 @@ def run_exact_prompt_live_harness(
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
-    if not pairs or len(set(pairs) | set(miss_pairs)) != len(pairs) + len(miss_pairs):
-        raise ContractError("exact-prompt live harness requires unique hit and miss pairs")
+    all_pairs = tuple(pairs) + tuple(miss_pairs) + tuple(rejection_pairs)
+    if not pairs or len(set(all_pairs)) != len(all_pairs):
+        raise ContractError("exact-prompt live harness requires unique hit, miss, and rejection pairs")
     if warmup_repetitions < 0 or measurement_repetitions < 2:
         raise ContractError("exact-prompt live harness requires non-negative warmups and two measurements")
     config = load_bridge_config(config_path)
@@ -135,8 +137,13 @@ def run_exact_prompt_live_harness(
     cases: list[dict[str, Any]] = []
     ratios_by_request: dict[str, list[float]] = {}
     request_fingerprints: dict[str, str] = {}
-    work_items = tuple((pair, True) for pair in pairs) + tuple((pair, False) for pair in miss_pairs)
-    for pair_spec, require_hit in work_items:
+    work_items = (
+        tuple((pair, "exact_hit") for pair in pairs)
+        + tuple((pair, "edited_miss") for pair in miss_pairs)
+        + tuple((pair, "controlled_rejection") for pair in rejection_pairs)
+    )
+    for pair_spec, cluster in work_items:
+        require_hit = cluster != "edited_miss"
         source, target = _pair(records, pair_spec, pair_mode="exact_repeat" if require_hit else "source_reuse")
         for _ in range(warmup_repetitions):
             _, _, provider, provider_request, proposal = _candidate_from_archive(
@@ -157,6 +164,7 @@ def run_exact_prompt_live_harness(
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
             candidate_tokens=candidate,
             operation="live_pending",
+            forced_rejection_position=(output_tokens // 2 if cluster == "controlled_rejection" else None),
         )
         response = _validate_response(
             bridge_runner(config, request), request, config,
@@ -188,12 +196,15 @@ def run_exact_prompt_live_harness(
         cases.append({
             "source_record_id": source["record_id"], "target_record_id": target["record_id"],
             "request_id": target["request_id"], "response": response,
+            "workload_cluster": cluster,
             "archive_measurements": combined_rows, "provider_telemetry": provider_telemetry,
             "paired_lookup_inclusive_ratio_mean": fmean(ratios),
         })
     confidence = clustered_bootstrap_ci(ratios_by_request)
     analysis = {
         "case_count": len(cases),
+        "workload_clusters": {cluster: sum(case["workload_cluster"] == cluster for case in cases)
+                              for cluster in ("exact_hit", "edited_miss", "controlled_rejection")},
         "all_exact_output_and_state": all(case["response"]["exact_output_and_state"] for case in cases),
         "paired_serial_over_lookup_inclusive_candidate_ratio": asdict(confidence),
         "decision": "EXACT_PROMPT_ARCHIVE_HARNESS_POSITIVE" if confidence.lower > 1.0 else "EXACT_PROMPT_ARCHIVE_HARNESS_INCONCLUSIVE",
@@ -231,6 +242,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive-root", type=Path, required=True)
     parser.add_argument("--pair", action="append", required=True)
     parser.add_argument("--miss-pair", action="append", default=[])
+    parser.add_argument("--rejection-pair", action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
@@ -246,7 +258,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parsed = _parser().parse_args(arguments)
     run_exact_prompt_live_harness(
         config_path=parsed.config, manifest_path=parsed.manifest, trace_path=parsed.trace,
-        archive_root=parsed.archive_root, pairs=parsed.pair, miss_pairs=parsed.miss_pair, output_path=parsed.output,
+        archive_root=parsed.archive_root, pairs=parsed.pair, miss_pairs=parsed.miss_pair,
+        rejection_pairs=parsed.rejection_pair, output_path=parsed.output,
         report_path=parsed.report, repository_root=parsed.repository_root, command_arguments=arguments,
         k=parsed.k, output_tokens=parsed.output_tokens, warmup_repetitions=parsed.warmup_repetitions,
         measurement_repetitions=parsed.measurement_repetitions,
