@@ -1717,7 +1717,10 @@ HandledResponse verify_pending(const Json::Object & request) {
     llama_synchronize(verifier.raw());
     bool tail_trimmed = false;
     std::string reconstruction = "pending-anchor+batch-score+native-tail-trim/v1";
-    if (accepted > 2U) {
+    // A wide verification batch mutates the KV state even when its rejected
+    // suffix begins at position zero.  Therefore the fallback is selected by
+    // batch width, not by the number of accepted draft tokens.
+    if (draft_tokens.size() > 2U) {
         restore_state(verifier, prompt_state);
         decode_tokens(verifier, std::vector<llama_token>{anchor_token}, prefix_size, true);
         for (std::size_t index = 0; index < accepted; ++index) {
@@ -2554,7 +2557,9 @@ HandledResponse benchmark_pending(const Json::Object & request) {
                 run.accepted += accepted;
                 ++run.verification_rounds;
                 llama_synchronize(context.raw());
-                if (accepted > 2U) {
+                // See verify_pending: the entire wide batch must be replayed
+                // from the checkpoint regardless of where rejection occurs.
+                if (batch.size() > 3U) {
                     restore_state(context, pre_verification_state);
                     decode_tokens(context, std::vector<llama_token>{pending}, committed_size, true);
                     for (std::size_t index = 0; index < accepted; ++index) {
