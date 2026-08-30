@@ -157,6 +157,21 @@ production decode integration or a general PCSS speedup claim.
   This establishes a conservative lookup-inclusive **decode-only bound** for
   exact-prompt archive hits; it does not establish integrated provider,
   end-to-end request, representative workload, cold-I/O, or thermal speedup.
+- Revision `e1283ee35344cc7e436f56ccc5975699074433e8` then exercised the same
+  sealed archive in a controlled external archive-to-bridge harness rather than
+  merely composing independent clocks. Before every measured bridge repetition
+  it performed a full exact-prompt lookup, required one hit from the expected
+  source record, read the K=2 cursor, and added that measured lookup time to the
+  candidate clock. The target receipt is `LOCAL_MEASURED
+  EXACT_PROMPT_ARCHIVE_HARNESS_POSITIVE`: all 12 output/state comparisons exact,
+  256/256 accepted candidate tokens per case, no checkpoints/reconstructions,
+  paired lookup-inclusive ratio `1.095104`, clustered 95% CI
+  `[1.071656, 1.117347]` (raw SHA-256
+  `e27fe0a3749b35fc372e6e703dd87c1542d60912c246ea704773341f13d3a198`).
+  Measured per-repetition archive lookup ranged from 33.375 to 63.459
+  microseconds. This is an external sealed-archive plus isolated-bridge harness,
+  not a llama.cpp provider hook, end-to-end request measurement, representative
+  workload result, or production decode integration.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
