@@ -1,6 +1,6 @@
 """Fail-closed Python boundary for the local ``pcss_llama_bridge`` executable.
 
-The native bridge owns llama.cpp model loading and full-context state handling.
+The native bridge owns llama.cpp model loading and model-memory state handling.
 This module owns explicit configuration, independently checks the bridge's
 observed library identity, and rejects every incomplete or ambiguous response.
 It is a verifier adapter only; it makes no performance or deployment claim.
@@ -27,8 +27,8 @@ CONFIG_ENVIRONMENT_VARIABLE = "PCSS_LLAMACPP_CONFIG"
 CONFIG_SCHEMA_VERSION = "pcss.llamacpp-adapter-config/v1"
 BRIDGE_PROTOCOL_VERSION = "pcss.llama-bridge/v1"
 REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
-CAPABILITIES_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v1"
-VERIFY_SCHEMA_VERSION = "pcss.llama-bridge-verify/v1"
+CAPABILITIES_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v2"
+VERIFY_SCHEMA_VERSION = "pcss.llama-bridge-verify/v2"
 
 _CONFIG_FIELDS = {
     "schema_version",
@@ -112,23 +112,29 @@ _VERIFY_RESPONSE_FIELDS = {
     "seed_id",
     "case_id",
     "target_tokens",
+    "verification_target_tokens",
+    "verification_targets_match",
     "vocabulary_size",
     "accepted_draft_tokens",
+    "reference_accepted_draft_tokens",
     "correction_token",
     "bonus_token",
     "committed_tokens",
+    "reference_committed_tokens",
     "prompt_state_sha256",
     "prompt_state_bytes",
-    "serial_state_sha256",
-    "serial_state_bytes",
-    "batched_state_sha256",
-    "batched_state_bytes",
-    "serial_mutable_state_digest",
-    "speculative_mutable_state_digest",
+    "reference_state_sha256",
+    "reference_state_bytes",
+    "committed_state_sha256",
+    "committed_state_bytes",
+    "verifier_draft_state_sha256",
+    "verifier_draft_state_bytes",
+    "reference_mutable_state_digest",
+    "committed_mutable_state_digest",
     "mutable_state_digest",
     "state_matches",
-    "serial_next_token",
-    "batched_next_token",
+    "reference_next_token",
+    "committed_next_token",
     "continuation_matches",
     "configuration",
     "observed_context",
@@ -140,12 +146,11 @@ _VERIFY_RESPONSE_FIELDS = {
     "thinking_mode_applied",
 }
 _FULL_STATE_COMPONENTS = (
-    "llama_context_full_state",
-    "memory",
-    "logits",
-    "embedding_if_enabled",
+    "model_architecture_identity",
+    "llama_memory",
 )
-_STATE_API = "llama_state_get_data+llama_state_set_data/full-context/v1"
+_STATE_EXPORT = "model-architecture+memory-state/v2"
+_STATE_API = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2"
 _SAMPLER_RNG_STATE = "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1"
 _DECLARED_IDENTITY_FIELDS = "caller-declared-not-verified-by-bridge/v1"
 _GENERATION_MODE = "greedy_argmax"
@@ -437,8 +442,8 @@ def _validate_shared_response_facts(response: Mapping[str, Any], config: _Bridge
         raise ContractError(f"{field} is not a llama.cpp result")
     if response["generation_mode"] != _GENERATION_MODE or response["greedy_tie_break"] != _GREEDY_TIE_BREAK:
         raise ContractError(f"{field} is not deterministic greedy argmax")
-    if response["state_export"] != "full_context_state/v1":
-        raise ContractError(f"{field} does not declare full-context state export")
+    if response["state_export"] != _STATE_EXPORT:
+        raise ContractError(f"{field} does not declare the bound model-memory state export")
     if response["state_api"] != _STATE_API:
         raise ContractError(f"{field} does not declare full llama state get/set")
     if response["sampler_rng_state"] != _SAMPLER_RNG_STATE:
@@ -473,15 +478,15 @@ def _validate_capabilities(response: dict[str, Any], config: _BridgeConfig) -> t
         raise ContractError(f"{field} probe token is outside the reported vocabulary")
     state_components = response["state_components"]
     if not isinstance(state_components, list) or tuple(state_components) != _FULL_STATE_COMPONENTS:
-        raise ContractError(f"{field} has incomplete full-state coverage")
+        raise ContractError(f"{field} has incomplete model-memory state coverage")
     probe_digest = _require_sha256(response["probe_state_sha256"], f"{field}.probe_state_sha256")
     restored_digest = _require_sha256(response["restored_state_sha256"], f"{field}.restored_state_sha256")
     probe_bytes = require_int(response["probe_state_bytes"], f"{field}.probe_state_bytes", minimum=1)
     restored_bytes = require_int(response["restored_state_bytes"], f"{field}.restored_state_bytes", minimum=1)
     if not _require_bool(response["state_round_trip_byte_exact"], f"{field}.state_round_trip_byte_exact"):
-        raise ContractError(f"{field} did not complete a byte-exact full-state round trip")
+        raise ContractError(f"{field} did not complete a byte-exact model-memory state round trip")
     if probe_digest != restored_digest or probe_bytes != restored_bytes:
-        raise ContractError(f"{field} full-state round trip changed bytes")
+        raise ContractError(f"{field} model-memory state round trip changed bytes")
     operations = response["operations"]
     if not isinstance(operations, list) or tuple(operations) != ("capabilities", "reference", "verify"):
         raise ContractError(f"{field} has an incomplete operation set")
@@ -517,7 +522,7 @@ def _validate_verify_response(
     if response["status"] not in {"ok", "mismatch"}:
         raise ContractError(f"{field} has an unsupported status")
     _validate_shared_response_facts(response, config, field)
-    if response["reconstruction"] != "serial-vs-one-batch/v1":
+    if response["reconstruction"] != "batch-score+serial-canonical-commit/v2":
         raise ContractError(f"{field} has an unsupported reconstruction method")
     if response["tokenization_boundary"] != "caller-supplied-raw-token-ids/v1":
         raise ContractError(f"{field} has an unexpected tokenization boundary")
@@ -526,9 +531,14 @@ def _validate_verify_response(
 
     vocabulary_size = require_int(response["vocabulary_size"], f"{field}.vocabulary_size", minimum=1)
     target_tokens = _require_tokens(response["target_tokens"], f"{field}.target_tokens", nonempty=True)
+    verification_target_tokens = _require_tokens(
+        response["verification_target_tokens"], f"{field}.verification_target_tokens", nonempty=True
+    )
     if len(target_tokens) != case.k + 1:
         raise ContractError(f"{field} target token count differs from draft length plus one")
-    if any(token >= vocabulary_size for token in target_tokens):
+    if len(verification_target_tokens) != len(target_tokens):
+        raise ContractError(f"{field} verification target count differs from serial reference")
+    if any(token >= vocabulary_size for token in target_tokens + verification_target_tokens):
         raise ContractError(f"{field} target tokens are outside the reported vocabulary")
     fixture_target = tuple(case.target_tokens)
     if len(fixture_target) < case.k or len(fixture_target) > len(target_tokens):
@@ -537,26 +547,44 @@ def _validate_verify_response(
         raise ContractError("native serial greedy target prefix differs from fixture target tokens")
 
     accepted = require_int(response["accepted_draft_tokens"], f"{field}.accepted_draft_tokens", minimum=0)
-    if accepted > case.k:
+    reference_accepted = require_int(
+        response["reference_accepted_draft_tokens"], f"{field}.reference_accepted_draft_tokens", minimum=0
+    )
+    if accepted > case.k or reference_accepted > case.k:
         raise ContractError(f"{field} accepts more draft tokens than k")
     expected_accepted = 0
-    for draft_token, target_token in zip(case.draft_tokens, target_tokens):
+    for draft_token, target_token in zip(case.draft_tokens, verification_target_tokens):
         if draft_token != target_token:
             break
         expected_accepted += 1
     if accepted != expected_accepted:
-        raise ContractError(f"{field} accepted-draft count disagrees with its target tokens")
+        raise ContractError(f"{field} accepted-draft count disagrees with its verification targets")
+    expected_reference_accepted = 0
+    for draft_token, target_token in zip(case.draft_tokens, target_tokens):
+        if draft_token != target_token:
+            break
+        expected_reference_accepted += 1
+    if reference_accepted != expected_reference_accepted:
+        raise ContractError(f"{field} reference accepted-draft count disagrees with serial targets")
+    authoritative_target_count = accepted + 1 if accepted < case.k else len(target_tokens)
+    verification_matches = _require_bool(
+        response["verification_targets_match"], f"{field}.verification_targets_match"
+    )
+    if verification_matches != (
+        verification_target_tokens[:authoritative_target_count] == target_tokens[:authoritative_target_count]
+    ):
+        raise ContractError(f"{field} verification-target match claim is inconsistent")
     correction = response["correction_token"]
     bonus = response["bonus_token"]
     if accepted < case.k:
-        expected_correction = target_tokens[accepted]
+        expected_correction = verification_target_tokens[accepted]
         if correction != expected_correction or bonus is not None:
             raise ContractError(f"{field} correction or bonus disagrees with target tokens")
         committed_expected = case.draft_tokens[:accepted] + (expected_correction,)
     else:
         if correction is not None:
             raise ContractError(f"{field} full acceptance has a correction token")
-        expected_bonus = target_tokens[case.k] if case.include_bonus_on_full_accept else None
+        expected_bonus = verification_target_tokens[case.k] if case.include_bonus_on_full_accept else None
         if bonus != expected_bonus:
             raise ContractError(f"{field} bonus token disagrees with target tokens")
         committed_expected = case.draft_tokens + (() if expected_bonus is None else (expected_bonus,))
@@ -565,39 +593,54 @@ def _validate_verify_response(
     if bonus is not None:
         _response_token(bonus, f"{field}.bonus_token", vocabulary_size)
     committed = _require_tokens(response["committed_tokens"], f"{field}.committed_tokens", nonempty=True)
+    reference_committed = _require_tokens(
+        response["reference_committed_tokens"], f"{field}.reference_committed_tokens", nonempty=True
+    )
     if committed != committed_expected:
         raise ContractError(f"{field} committed tokens disagree with its acceptance outcome")
-    if committed != case.expected_committed_tokens:
-        raise ContractError("native committed tokens differ from the fixture expectation")
+    if reference_committed != case.expected_committed_tokens:
+        raise ContractError("native serial reference commit differs from the fixture expectation")
 
     _require_sha256(response["prompt_state_sha256"], f"{field}.prompt_state_sha256")
     require_int(response["prompt_state_bytes"], f"{field}.prompt_state_bytes", minimum=1)
-    serial_digest = _require_sha256(response["serial_state_sha256"], f"{field}.serial_state_sha256")
-    batched_digest = _require_sha256(response["batched_state_sha256"], f"{field}.batched_state_sha256")
-    serial_bytes = require_int(response["serial_state_bytes"], f"{field}.serial_state_bytes", minimum=1)
-    batched_bytes = require_int(response["batched_state_bytes"], f"{field}.batched_state_bytes", minimum=1)
-    serial_mutable = _require_sha256(
-        response["serial_mutable_state_digest"], f"{field}.serial_mutable_state_digest"
+    reference_digest = _require_sha256(response["reference_state_sha256"], f"{field}.reference_state_sha256")
+    committed_digest = _require_sha256(response["committed_state_sha256"], f"{field}.committed_state_sha256")
+    reference_bytes = require_int(response["reference_state_bytes"], f"{field}.reference_state_bytes", minimum=1)
+    committed_bytes = require_int(response["committed_state_bytes"], f"{field}.committed_state_bytes", minimum=1)
+    _require_sha256(response["verifier_draft_state_sha256"], f"{field}.verifier_draft_state_sha256")
+    require_int(response["verifier_draft_state_bytes"], f"{field}.verifier_draft_state_bytes", minimum=1)
+    reference_mutable = _require_sha256(
+        response["reference_mutable_state_digest"], f"{field}.reference_mutable_state_digest"
     )
-    speculative_mutable = _require_sha256(
-        response["speculative_mutable_state_digest"], f"{field}.speculative_mutable_state_digest"
+    committed_mutable = _require_sha256(
+        response["committed_mutable_state_digest"], f"{field}.committed_mutable_state_digest"
     )
     mutable_state_digest = _require_sha256(response["mutable_state_digest"], f"{field}.mutable_state_digest")
     reconstruction_matches = _require_bool(response["state_matches"], f"{field}.state_matches")
     continuation_matches = _require_bool(response["continuation_matches"], f"{field}.continuation_matches")
-    if response["status"] == "ok" and not (reconstruction_matches and continuation_matches):
+    if response["status"] == "ok" and not (
+        verification_matches and reconstruction_matches and continuation_matches
+    ):
         raise ContractError(f"{field} status=ok contradicts its reconstruction result")
-    if response["status"] == "mismatch" and reconstruction_matches and continuation_matches:
+    if response["status"] == "mismatch" and verification_matches and reconstruction_matches and continuation_matches:
         raise ContractError(f"{field} status=mismatch contradicts its reconstruction result")
-    if reconstruction_matches and (serial_digest != batched_digest or serial_bytes != batched_bytes):
-        raise ContractError(f"{field} matching serial and batched full-state digests differ")
-    if serial_mutable != serial_digest or speculative_mutable != batched_digest or mutable_state_digest != serial_digest:
-        raise ContractError(f"{field} mutable-state digests disagree with full-state digests")
-    if mutable_state_digest != case.expected_state_digest:
-        raise ContractError("native mutable-state digest differs from the fixture expectation")
-    serial_next = _response_token(response["serial_next_token"], f"{field}.serial_next_token", vocabulary_size)
-    batched_next = _response_token(response["batched_next_token"], f"{field}.batched_next_token", vocabulary_size)
-    if continuation_matches and serial_next != batched_next:
+    if reconstruction_matches and (reference_digest != committed_digest or reference_bytes != committed_bytes):
+        raise ContractError(f"{field} matching reference and committed state digests differ")
+    if (
+        reference_mutable != reference_digest
+        or committed_mutable != committed_digest
+        or mutable_state_digest != committed_digest
+    ):
+        raise ContractError(f"{field} mutable-state digests disagree with exported state digests")
+    if reference_mutable != case.expected_state_digest:
+        raise ContractError("native serial reference state differs from the fixture expectation")
+    reference_next = _response_token(
+        response["reference_next_token"], f"{field}.reference_next_token", vocabulary_size
+    )
+    committed_next = _response_token(
+        response["committed_next_token"], f"{field}.committed_next_token", vocabulary_size
+    )
+    if continuation_matches and reference_next != committed_next:
         raise ContractError(f"{field} matching continuation tokens differ")
 
     return AdapterOutcome(
@@ -606,6 +649,7 @@ def _validate_verify_response(
         bonus_token=bonus,
         committed_tokens=committed,
         mutable_state_digest=mutable_state_digest,
+        verification_matches=verification_matches,
         reconstruction_matches=reconstruction_matches,
         continuation_matches=continuation_matches,
     )
@@ -643,7 +687,7 @@ class LlamaCppBridgeAdapter:
             self._availability = AdapterAvailability("NOT_RUN", str(error))
         else:
             self._availability = AdapterAvailability(
-                "TARGET_BACKEND", "native llama.cpp full-state capability probe verified"
+                "TARGET_BACKEND", "native llama.cpp model-memory state capability probe verified"
             )
         return self._availability
 

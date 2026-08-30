@@ -53,11 +53,14 @@ reasoning policy.
 
 --pcss-capabilities accepts the common request above. It does not report ok
 until it has loaded the requested GGUF, created the requested context, decoded
-the model BOS token (or token 0 if no BOS exists), exported the full context
+the model BOS token (or token 0 if no BOS exists), exported the model-memory state
 with llama_state_get_data, restored it with llama_state_set_data into a fresh
 equivalent context, and compared the two serialized byte streams exactly.
 
-The successful response uses pcss.llama-bridge-capabilities/v1. Its required
+At the pinned llama.cpp revision, this state contains the model architecture
+identity plus the context memory/KV state. It does not contain logits,
+embeddings, a sampler, or RNG state. The successful response uses
+pcss.llama-bridge-capabilities/v2. Its required
 top-level fields are:
 
 ~~~text
@@ -95,7 +98,7 @@ sampler_rng_state: "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1".
     "steps": 8
   },
   "reference": {
-    "method": "serial-greedy-full-state/v1"
+    "method": "serial-greedy-memory-state/v2"
   }
 }
 ~~~
@@ -106,7 +109,7 @@ tokens by greedy argmax, breaking equal logits by lowest token ID. steps may be
 zero, in which case target_tokens is empty and the completion state is the
 prompt state.
 
-The successful response uses pcss.llama-bridge-reference/v1 and contains:
+The successful response uses pcss.llama-bridge-reference/v2 and contains:
 
 ~~~text
 schema_version, operation, status, backend, generation_mode, greedy_tie_break,
@@ -118,7 +121,7 @@ declared_identity_fields, chat_template_applied, thinking_mode_applied
 ~~~
 
 target_tokens has exactly seed.steps entries. mutable_state_digest equals
-completion_state_sha256, the SHA-256 of the full state after that serial
+completion_state_sha256, the SHA-256 of the model-memory state after that serial
 continuation.
 
 ## Verification case
@@ -140,34 +143,43 @@ continuation.
 }
 ~~~
 
-The bridge generates len(draft_tokens) + 1 serial greedy target tokens,
-calculates the accepted draft prefix, correction or optional bonus token, then
-uses the captured full prompt state twice:
+The bridge generates a serial reference and restores the prompt state into a
+disposable verifier context. It scores every draft token in one batch with
+logits enabled at every output position. The prompt logits plus those batch
+outputs define the verifier target sequence and therefore the accepted prefix,
+correction, or optional bonus token.
 
-1. Restore and decode committed tokens one by one.
-2. Restore and decode the same committed tokens in exactly one batch.
+The disposable verifier context is never committed. The bridge restores the
+prompt state into separate reference and committed contexts, then decodes the
+serial-reference commit and verifier-derived commit one token at a time. This
+serial canonical commit is deliberately a correctness protocol, not a speed
+claim.
 
-It compares the full serialized states byte-for-byte and also compares the
-next greedy token from both restored contexts. A mismatch yields
+It requires the authoritative verifier targets to equal the serial reference,
+compares the resulting model-memory states byte-for-byte, and compares the next
+greedy token. A mismatch yields
 status: "mismatch" and a non-zero process exit after its JSON response.
 
-The successful or mismatch response uses pcss.llama-bridge-verify/v1 and
+The successful or mismatch response uses pcss.llama-bridge-verify/v2 and
 contains:
 
 ~~~text
 schema_version, operation, status, backend, generation_mode, greedy_tie_break,
 state_export, reconstruction, seed_id, case_id, target_tokens,
-vocabulary_size, accepted_draft_tokens, correction_token, bonus_token,
-committed_tokens, prompt_state_sha256, prompt_state_bytes,
-serial_state_sha256, serial_state_bytes, batched_state_sha256,
-batched_state_bytes, serial_mutable_state_digest,
-speculative_mutable_state_digest, mutable_state_digest, state_matches,
-serial_next_token, batched_next_token, continuation_matches, configuration,
+verification_target_tokens, verification_targets_match, vocabulary_size,
+accepted_draft_tokens, reference_accepted_draft_tokens, correction_token,
+bonus_token, committed_tokens, reference_committed_tokens,
+prompt_state_sha256, prompt_state_bytes, reference_state_sha256,
+reference_state_bytes, committed_state_sha256, committed_state_bytes,
+verifier_draft_state_sha256, verifier_draft_state_bytes,
+reference_mutable_state_digest, committed_mutable_state_digest,
+mutable_state_digest, state_matches, reference_next_token,
+committed_next_token, continuation_matches, configuration,
 observed_context, tokenization_boundary, state_api, sampler_rng_state,
 declared_identity_fields, chat_template_applied, thinking_mode_applied
 ~~~
 
-mutable_state_digest is the serial reference digest. The bridge never takes
+mutable_state_digest is the canonical committed-state digest. The bridge never takes
 caller-provided target tokens or expected state digests; the harness must
 independently validate those values.
 

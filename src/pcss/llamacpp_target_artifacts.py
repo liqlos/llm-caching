@@ -38,7 +38,7 @@ from .verifier_runner import observe_target_host
 
 
 CAPABILITY_REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
-CAPABILITY_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v1"
+CAPABILITY_SCHEMA_VERSION = "pcss.llama-bridge-capabilities/v2"
 SEED_PLAN_SCHEMA_VERSION = "pcss.llamacpp-capability-seed-plan/v1"
 MODEL_DESCRIPTOR_SCHEMA_VERSION = "pcss.target-model-descriptor/v1"
 SEED_OBSERVATION_SCHEMA_VERSION = "pcss.llamacpp-capability-seed-observation/v1"
@@ -264,14 +264,14 @@ def _validate_capability_response(response: Mapping[str, Any], config: BridgeCon
         raise ContractError("pcss_llama_bridge capability schema is unsupported")
     if response["operation"] != "capabilities" or response["status"] != "ok" or response["backend"] != "llama.cpp":
         raise ContractError("pcss_llama_bridge did not return a successful llama.cpp capability observation")
-    if response["state_export"] != "full_context_state/v1":
-        raise ContractError("pcss_llama_bridge capability does not declare full-context state export")
+    if response["state_export"] != "model-architecture+memory-state/v2":
+        raise ContractError("pcss_llama_bridge capability does not declare model-memory state export")
     if response["generation_mode"] != "greedy_argmax" or response["greedy_tie_break"] != "lowest-token-id/v1":
         raise ContractError("pcss_llama_bridge capability is not deterministic greedy argmax")
     if not _require_bool(response["raw_token_ids"], "pcss_llama_bridge capability response.raw_token_ids"):
         raise ContractError("pcss_llama_bridge capability does not use caller-supplied raw token ids")
-    if response["state_api"] != "llama_state_get_data+llama_state_set_data/full-context/v1":
-        raise ContractError("pcss_llama_bridge capability does not declare the required full-state API")
+    if response["state_api"] != "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2":
+        raise ContractError("pcss_llama_bridge capability does not declare the required model-memory state API")
     if response["chat_template_applied"] is not False or response["thinking_mode_applied"] is not False:
         raise ContractError("pcss_llama_bridge capability unexpectedly applied a template or thinking mode")
     if not _require_bool(response["state_round_trip_byte_exact"], "pcss_llama_bridge capability response.state_round_trip_byte_exact"):
@@ -319,13 +319,8 @@ def _validate_capability_response(response: Mapping[str, Any], config: BridgeCon
     }
     if dict(observed_context) != expected_context:
         raise ContractError("pcss_llama_bridge observed context differs from the explicit runtime config")
-    if response["state_components"] != [
-        "llama_context_full_state",
-        "memory",
-        "logits",
-        "embedding_if_enabled",
-    ]:
-        raise ContractError("pcss_llama_bridge capability full-state coverage is incomplete")
+    if response["state_components"] != ["model_architecture_identity", "llama_memory"]:
+        raise ContractError("pcss_llama_bridge capability model-memory state coverage is incomplete")
     if response["operations"] != ["capabilities", "reference", "verify"]:
         raise ContractError("pcss_llama_bridge capability operation set is incomplete")
     for field in (

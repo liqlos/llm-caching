@@ -74,6 +74,7 @@ _CASE_V1_KEYS = {
 }
 _CASE_V2_KEYS = _CASE_V1_KEYS | {"initial_context_tokens"}
 _CASE_V3_KEYS = _CASE_V2_KEYS | {"seed_id"}
+_CASE_V4_KEYS = _CASE_V3_KEYS
 _FIXTURE_TARGET_KEYS = {"schema_version", "provenance", "cases"}
 
 
@@ -87,18 +88,24 @@ def _case(
         required = _CASE_V1_KEYS
     elif schema_version == "pcss.m4-verifier-cases/v2":
         required = _CASE_V2_KEYS
-    else:
+    elif schema_version == "pcss.m4-verifier-cases/v3":
         required = _CASE_V3_KEYS
+    else:
+        required = _CASE_V4_KEYS
     if set(payload) != required:
         raise ContractError("verifier case has missing or unknown fields")
     initial_context_tokens = ()
     seed_id: str | None = None
-    if schema_version in {"pcss.m4-verifier-cases/v2", "pcss.m4-verifier-cases/v3"}:
+    if schema_version in {
+        "pcss.m4-verifier-cases/v2",
+        "pcss.m4-verifier-cases/v3",
+        "pcss.m4-verifier-cases/v4",
+    }:
         initial_context_tokens = tuple(payload["initial_context_tokens"])
         if not initial_context_tokens:
             raise ContractError("target verifier cases require a non-empty initial_context_tokens sequence")
-    if schema_version == "pcss.m4-verifier-cases/v3":
-        seed_id = require_string(payload["seed_id"], "v3 verifier case.seed_id")
+    if schema_version in {"pcss.m4-verifier-cases/v3", "pcss.m4-verifier-cases/v4"}:
+        seed_id = require_string(payload["seed_id"], "target verifier case.seed_id")
     return VerifierCase(
         case_id=payload["case_id"],
         draft_tokens=tuple(payload["draft_tokens"]),
@@ -142,11 +149,15 @@ def load_cases(path: Path) -> tuple[VerifierCase, ...]:
     provenance: TargetFixtureProvenance | None = None
     if schema_version == "pcss.m4-verifier-cases/v1":
         require_exact_keys(payload, {"schema_version", "cases"}, "verifier fixture")
-    elif schema_version in {"pcss.m4-verifier-cases/v2", "pcss.m4-verifier-cases/v3"}:
+    elif schema_version in {
+        "pcss.m4-verifier-cases/v2",
+        "pcss.m4-verifier-cases/v3",
+        "pcss.m4-verifier-cases/v4",
+    }:
         require_exact_keys(payload, _FIXTURE_TARGET_KEYS, "verifier fixture")
         provenance = _fixture_provenance(require_mapping(payload["provenance"], "verifier fixture provenance"))
     else:
-        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1, v2, or v3")
+        raise ContractError("verifier fixture must use pcss.m4-verifier-cases/v1, v2, v3, or v4")
     if not isinstance(payload["cases"], list) or not payload["cases"]:
         raise ContractError("verifier fixture must contain at least one case")
     cases = tuple(

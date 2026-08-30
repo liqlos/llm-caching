@@ -46,7 +46,7 @@ state = hashlib.sha256(json.dumps(
     {{"context": context, "target_tokens": target_tokens}}, sort_keys=True, separators=(",", ":")
 ).encode("utf-8")).hexdigest()
 response = {{
-    "schema_version": "pcss.llama-bridge-reference/v1",
+    "schema_version": "pcss.llama-bridge-reference/v2",
     "operation": "reference",
     "status": "ok",
     "backend": "llama.cpp",
@@ -55,7 +55,7 @@ response = {{
     "seed_id": request["seed"]["seed_id"],
     "target_tokens": target_tokens,
     "vocabulary_size": vocabulary_size,
-    "state_export": "full_context_state/v1",
+    "state_export": "model-architecture+memory-state/v2",
     "mutable_state_digest": state,
     "completion_state_sha256": state,
     "completion_state_bytes": 64,
@@ -74,7 +74,7 @@ response = {{
         "actual_n_threads_batch": request["runtime"]["n_threads_batch"],
     }},
     "tokenization_boundary": "caller-supplied-raw-token-ids/v1",
-    "state_api": "llama_state_get_data+llama_state_set_data/full-context/v1",
+    "state_api": "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2",
     "sampler_rng_state": "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1",
     "declared_identity_fields": "caller-declared-not-verified-by-bridge/v1",
     "chat_template_applied": False,
@@ -167,7 +167,7 @@ def _build(
     return receipt, config, seeds, fixture_directory, raw_result, report
 
 
-def test_builds_all_v3_fixture_suites_from_real_bridge_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_builds_all_v4_fixture_suites_from_real_bridge_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     receipt, config_path, _, fixture_directory, raw_result, report = _build(tmp_path, monkeypatch=monkeypatch)
     config = load_bridge_config(config_path)
     model_hash = hashlib.sha256((tmp_path / "model.gguf").read_bytes()).hexdigest()
@@ -187,18 +187,18 @@ def test_builds_all_v3_fixture_suites_from_real_bridge_reference(tmp_path: Path,
 
     suite_cases = {}
     for suite, filename in {
-        "k_sweep": "k-sweep.v3.json",
-        "perfect_draft": "perfect-draft.v3.json",
-        "provider_floor": "provider-floor.v3.json",
-        "forced_rejection": "forced-rejection.v3.json",
-        "long_mixed": "long-mixed.v3.json",
+        "k_sweep": "k-sweep.v4.json",
+        "perfect_draft": "perfect-draft.v4.json",
+        "provider_floor": "provider-floor.v4.json",
+        "forced_rejection": "forced-rejection.v4.json",
+        "long_mixed": "long-mixed.v4.json",
     }.items():
         fixture = fixture_directory / filename
         payload = json.loads(fixture.read_text(encoding="utf-8"))
         assert payload["schema_version"] == FIXTURE_SCHEMA_VERSION
         assert payload["provenance"] == {
-            "schema_version": "pcss.target-verifier-fixture-provenance/v1",
-            "reference_method": "serial-greedy-full-state/v1",
+            "schema_version": "pcss.target-verifier-fixture-provenance/v2",
+            "reference_method": "serial-greedy-memory-state/v2",
             "model_artifact_sha256": model_hash,
             "runtime_configuration_fingerprint": config.runtime_configuration_fingerprint,
         }
@@ -240,7 +240,7 @@ def test_long_mixed_reanchors_to_the_reconstructed_prefill_boundary(
 ) -> None:
     _, _, _, fixture_directory, _, _ = _build(tmp_path, monkeypatch=monkeypatch, bridge_mode="prefill-sensitive")
 
-    mixed = load_cases(fixture_directory / "long-mixed.v3.json")
+    mixed = load_cases(fixture_directory / "long-mixed.v4.json")
 
     assert len(mixed) == 1
     assert mixed[0].seed_id == "alpha"

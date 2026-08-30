@@ -112,7 +112,40 @@ def test_native_reconstruction_mismatch_is_a_target_failure() -> None:
     assert receipt.status == "FAILED"
     assert receipt.execution_class == "TARGET_BACKEND"
     assert receipt.cases[0].state_matches is False
-    assert receipt.cases[0].failures == ("serial_batched_state_mismatch",)
+    assert receipt.cases[0].failures == ("reference_committed_state_mismatch",)
+
+
+class VerificationTargetMismatchAdapter(ReconstructionMismatchAdapter):
+    name = "verification-target-mismatch"
+
+    def verify(self, case: VerifierCase) -> AdapterOutcome:
+        return AdapterOutcome(
+            accepted_draft_tokens=1,
+            correction_token=None,
+            bonus_token=None,
+            committed_tokens=case.expected_committed_tokens,
+            mutable_state_digest=case.expected_state_digest,
+            verification_matches=False,
+        )
+
+
+def test_batch_verification_target_mismatch_is_a_target_failure() -> None:
+    adapter = VerificationTargetMismatchAdapter()
+    harness = VerifierHarness(
+        adapter,
+        target_execution_permit=TargetExecutionPermit(
+            adapter_name=adapter.name,
+            host_fingerprint="a" * 64,
+            adapter_binding_fingerprint="b" * 64,
+        ),
+    )
+
+    receipt = harness.k_sweep((case("target-mismatch", (1,), (1,), (1,)),))
+
+    assert receipt.status == "FAILED"
+    assert receipt.cases[0].failures == ("batched_verification_target_mismatch",)
+
+
 def test_fixture_is_explicitly_offline_not_a_hardware_receipt() -> None:
     fixture = Path(__file__).parents[1] / "fixtures" / "verifier" / "offline_token_state_cases.json"
     payload = json.loads(fixture.read_text())
@@ -156,8 +189,8 @@ def test_target_binding_requires_a_hashed_immutable_runtime_configuration() -> N
 
 def test_context_bearing_target_fixture_provenance_is_strict() -> None:
     provenance = TargetFixtureProvenance(
-        schema_version="pcss.target-verifier-fixture-provenance/v1",
-        reference_method="serial-greedy-full-state/v1",
+        schema_version="pcss.target-verifier-fixture-provenance/v2",
+        reference_method="serial-greedy-memory-state/v2",
         model_artifact_sha256="a" * 64,
         runtime_configuration_fingerprint="b" * 64,
     )

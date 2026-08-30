@@ -51,12 +51,12 @@ def fixture_payload() -> dict:
     }
 
 
-def fixture_payload_v3() -> dict:
+def fixture_payload_v4() -> dict:
     return {
-        "schema_version": "pcss.m4-verifier-cases/v3",
+        "schema_version": "pcss.m4-verifier-cases/v4",
         "provenance": {
-            "schema_version": "pcss.target-verifier-fixture-provenance/v1",
-            "reference_method": "serial-greedy-full-state/v1",
+            "schema_version": "pcss.target-verifier-fixture-provenance/v2",
+            "reference_method": "serial-greedy-memory-state/v2",
             "model_artifact_sha256": "a" * 64,
             "runtime_configuration_fingerprint": "b" * 64,
         },
@@ -98,9 +98,9 @@ def test_fixture_loader_fails_closed(tmp_path: Path) -> None:
         load_cases(path)
 
 
-def test_v3_fixture_binds_context_seed_and_reference_runtime(tmp_path: Path) -> None:
-    path = tmp_path / "v3.json"
-    path.write_text(json.dumps(fixture_payload_v3()))
+def test_v4_fixture_binds_context_seed_and_reference_runtime(tmp_path: Path) -> None:
+    path = tmp_path / "v4.json"
+    path.write_text(json.dumps(fixture_payload_v4()))
     cases = load_cases(path)
     assert cases[0].initial_context_tokens == (10, 11)
     assert cases[0].seed_id == "raw-seed-alpha"
@@ -114,16 +114,16 @@ def test_v3_fixture_binds_context_seed_and_reference_runtime(tmp_path: Path) -> 
     )
 
 
-def test_v3_fixture_rejects_empty_context_or_different_runtime(tmp_path: Path) -> None:
-    payload = fixture_payload_v3()
+def test_v4_fixture_rejects_empty_context_or_different_runtime(tmp_path: Path) -> None:
+    payload = fixture_payload_v4()
     payload["cases"][0]["initial_context_tokens"] = []
     empty_path = tmp_path / "empty.json"
     empty_path.write_text(json.dumps(payload))
     with pytest.raises(ContractError, match="non-empty initial_context_tokens"):
         load_cases(empty_path)
 
-    path = tmp_path / "v3.json"
-    path.write_text(json.dumps(fixture_payload_v3()))
+    path = tmp_path / "v4.json"
+    path.write_text(json.dumps(fixture_payload_v4()))
     with pytest.raises(ContractError, match="runtime configuration"):
         _require_fixture_target_compatibility(
             load_cases(path),
@@ -135,7 +135,7 @@ def test_v3_fixture_rejects_empty_context_or_different_runtime(tmp_path: Path) -
 
 
 def test_v2_target_fixture_without_explicit_seed_is_not_target_compatible(tmp_path: Path) -> None:
-    payload = fixture_payload_v3()
+    payload = fixture_payload_v4()
     payload["schema_version"] = "pcss.m4-verifier-cases/v2"
     del payload["cases"][0]["seed_id"]
     path = tmp_path / "v2.json"
@@ -332,7 +332,7 @@ def test_runner_records_valid_target_mismatch_as_measured_failure(
 
     assert receipt.evidence_class == "LOCAL_MEASURED"
     assert receipt.status == "FAILED"
-    assert receipt.payload["cases"][0]["failures"] == ["serial_batched_state_mismatch"]
+    assert receipt.payload["cases"][0]["failures"] == ["reference_committed_state_mismatch"]
 
 
 class SelfDeclaredTargetAdapter:

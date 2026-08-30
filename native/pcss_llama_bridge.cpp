@@ -33,10 +33,11 @@ namespace {
 
 constexpr const char * kRequestSchema = "pcss.llama-bridge-request/v1";
 constexpr const char * kResultSchema = "pcss.llama-bridge-result/v1";
-constexpr const char * kCapabilitiesSchema = "pcss.llama-bridge-capabilities/v1";
-constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v1";
-constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v1";
-constexpr const char * kStateExport = "full_context_state/v1";
+constexpr const char * kCapabilitiesSchema = "pcss.llama-bridge-capabilities/v2";
+constexpr const char * kReferenceSchema = "pcss.llama-bridge-reference/v2";
+constexpr const char * kVerifySchema = "pcss.llama-bridge-verify/v2";
+constexpr const char * kStateExport = "model-architecture+memory-state/v2";
+constexpr const char * kStateApi = "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2";
 constexpr std::size_t kMaxRequestLineBytes = 16U * 1024U * 1024U;
 
 class BridgeError final : public std::runtime_error {
@@ -1061,8 +1062,12 @@ void decode_tokens(
     }
 }
 
-llama_token greedy_argmax(const Context & context, std::int32_t vocabulary_size) {
-    float * logits = llama_get_logits_ith(context.raw(), -1);
+llama_token greedy_argmax_at(
+    const Context & context,
+    std::int32_t vocabulary_size,
+    std::int32_t output_index
+) {
+    float * logits = llama_get_logits_ith(context.raw(), output_index);
     if (logits == nullptr) {
         throw BridgeError("logits_unavailable", "llama.cpp did not return logits for the final token");
     }
@@ -1084,27 +1089,60 @@ llama_token greedy_argmax(const Context & context, std::int32_t vocabulary_size)
     return best_token;
 }
 
+llama_token greedy_argmax(const Context & context, std::int32_t vocabulary_size) {
+    return greedy_argmax_at(context, vocabulary_size, -1);
+}
+
+void decode_one_batch_with_all_logits(
+    Context & context,
+    const std::vector<llama_token> & tokens,
+    std::size_t start_position
+) {
+    if (tokens.empty()) {
+        throw BridgeError("internal_error", "verification batch requires at least one token");
+    }
+    ensure_context_capacity(context, start_position, tokens.size());
+    const std::uint32_t actual_batch = llama_n_batch(context.raw());
+    if (actual_batch == 0U || tokens.size() > static_cast<std::size_t>(actual_batch)) {
+        throw BridgeError("invalid_request", "verification batch exceeds the actual llama.cpp n_batch");
+    }
+
+    Batch batch(tokens.size());
+    llama_batch & raw = batch.raw();
+    raw.n_tokens = static_cast<std::int32_t>(tokens.size());
+    for (std::size_t index = 0; index < tokens.size(); ++index) {
+        raw.token[index] = tokens[index];
+        raw.pos[index] = static_cast<llama_pos>(start_position + index);
+        raw.n_seq_id[index] = 1;
+        raw.seq_id[index][0] = 0;
+        raw.logits[index] = 1;
+    }
+    if (llama_decode(context.raw(), raw) != 0) {
+        throw BridgeError("decode_failed", "llama.cpp rejected the verification batch");
+    }
+}
+
 std::vector<std::uint8_t> snapshot_state(const Context & context) {
     llama_synchronize(context.raw());
     const std::size_t state_size = llama_state_get_size(context.raw());
     if (state_size == 0U) {
-        throw BridgeError("state_export_failed", "llama.cpp reported an empty full-context state");
+        throw BridgeError("state_export_failed", "llama.cpp reported an empty model-memory state");
     }
     std::vector<std::uint8_t> state(state_size);
     const std::size_t copied = llama_state_get_data(context.raw(), state.data(), state.size());
     if (copied != state.size()) {
-        throw BridgeError("state_export_failed", "llama.cpp did not export the complete full-context state");
+        throw BridgeError("state_export_failed", "llama.cpp did not export the complete model-memory state");
     }
     return state;
 }
 
 void restore_state(Context & context, const std::vector<std::uint8_t> & state) {
     if (state.empty()) {
-        throw BridgeError("state_restore_failed", "refusing to restore an empty full-context state");
+        throw BridgeError("state_restore_failed", "refusing to restore an empty model-memory state");
     }
     const std::size_t restored = llama_state_set_data(context.raw(), state.data(), state.size());
     if (restored != state.size()) {
-        throw BridgeError("state_restore_failed", "llama.cpp did not restore the complete full-context state");
+        throw BridgeError("state_restore_failed", "llama.cpp did not restore the complete model-memory state");
     }
 }
 
@@ -1196,7 +1234,7 @@ CapabilityProbe probe_configured_backend(const RequestConfig & config) {
     if (exported_state != restored_state) {
         throw BridgeError(
             "state_restore_failed",
-            "llama.cpp full-context state did not survive a byte-exact export/restore round trip"
+            "llama.cpp model-memory state did not survive a byte-exact export/restore round trip"
         );
     }
     return {
@@ -1246,12 +1284,10 @@ HandledResponse capabilities(const Json::Object & request) {
         {"actual_n_threads_batch", Json(static_cast<std::int64_t>(probe.actual_n_threads_batch))},
     });
     result["state_components"] = Json(Json::Array{
-        Json("llama_context_full_state"),
-        Json("memory"),
-        Json("logits"),
-        Json("embedding_if_enabled"),
+        Json("model_architecture_identity"),
+        Json("llama_memory"),
     });
-    result["state_api"] = Json("llama_state_get_data+llama_state_set_data/full-context/v1");
+    result["state_api"] = Json(kStateApi);
     result["declared_identity_fields"] = Json("caller-declared-not-verified-by-bridge/v1");
     result["chat_template_applied"] = Json(false);
     result["thinking_mode_applied"] = Json(false);
@@ -1289,7 +1325,7 @@ HandledResponse reference(const Json::Object & request) {
     const SeedSpec seed = parse_seed(request, true);
     const Json::Object & reference_config = as_object(required_field(request, "reference"), "reference");
     require_exact_keys(reference_config, {"method"});
-    if (required_string(reference_config, "method") != "serial-greedy-full-state/v1") {
+    if (required_string(reference_config, "method") != "serial-greedy-memory-state/v2") {
         throw BridgeError("invalid_request", "reference.method is unsupported");
     }
     if (seed.initial_context_tokens.size() > config.runtime.n_ctx ||
@@ -1326,7 +1362,7 @@ HandledResponse reference(const Json::Object & request) {
     result["configuration"] = runtime_echo(config);
     result["observed_context"] = observed_context(source);
     result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
-    result["state_api"] = Json("llama_state_get_data+llama_state_set_data/full-context/v1");
+    result["state_api"] = Json(kStateApi);
     result["declared_identity_fields"] = Json("caller-declared-not-verified-by-bridge/v1");
     result["chat_template_applied"] = Json(false);
     result["thinking_mode_applied"] = Json(false);
@@ -1368,15 +1404,35 @@ HandledResponse verify(const Json::Object & request) {
     Context source = runtime.make_context();
     decode_tokens(source, seed.initial_context_tokens, 0U, false);
     const std::vector<std::uint8_t> prompt_state = snapshot_state(source);
+    const llama_token prompt_target = greedy_argmax(source, runtime.vocabulary_size());
     const std::vector<llama_token> target_tokens = serial_greedy_tokens(
         source,
         seed.initial_context_tokens.size(),
         target_count,
         runtime.vocabulary_size()
     );
+    if (target_tokens.front() != prompt_target) {
+        throw BridgeError("internal_error", "serial reference changed before its first target token");
+    }
+
+    Context verifier = runtime.make_context();
+    restore_state(verifier, prompt_state);
+    decode_one_batch_with_all_logits(verifier, draft_tokens, seed.initial_context_tokens.size());
+    std::vector<llama_token> verification_target_tokens;
+    verification_target_tokens.reserve(target_count);
+    verification_target_tokens.push_back(prompt_target);
+    for (std::size_t index = 0; index < draft_tokens.size(); ++index) {
+        verification_target_tokens.push_back(greedy_argmax_at(
+            verifier,
+            runtime.vocabulary_size(),
+            static_cast<std::int32_t>(index)
+        ));
+    }
+    const std::vector<std::uint8_t> verifier_draft_state = snapshot_state(verifier);
 
     std::size_t accepted = 0U;
-    while (accepted < draft_tokens.size() && draft_tokens[accepted] == target_tokens[accepted]) {
+    while (accepted < draft_tokens.size() &&
+           draft_tokens[accepted] == verification_target_tokens[accepted]) {
         ++accepted;
     }
     std::vector<llama_token> committed_tokens(
@@ -1386,11 +1442,11 @@ HandledResponse verify(const Json::Object & request) {
     Json correction(nullptr);
     Json bonus(nullptr);
     if (accepted < draft_tokens.size()) {
-        const llama_token correction_token = target_tokens[accepted];
+        const llama_token correction_token = verification_target_tokens[accepted];
         committed_tokens.push_back(correction_token);
         correction = Json(static_cast<std::int64_t>(correction_token));
     } else if (include_bonus) {
-        const llama_token bonus_token = target_tokens[draft_tokens.size()];
+        const llama_token bonus_token = verification_target_tokens[draft_tokens.size()];
         committed_tokens.push_back(bonus_token);
         bonus = Json(static_cast<std::int64_t>(bonus_token));
     }
@@ -1398,62 +1454,99 @@ HandledResponse verify(const Json::Object & request) {
         throw BridgeError("internal_error", "verification produced no committed token");
     }
 
-    Context serial = runtime.make_context();
-    restore_state(serial, prompt_state);
+    std::size_t reference_accepted = 0U;
+    while (reference_accepted < draft_tokens.size() &&
+           draft_tokens[reference_accepted] == target_tokens[reference_accepted]) {
+        ++reference_accepted;
+    }
+    std::vector<llama_token> reference_committed_tokens(
+        draft_tokens.begin(),
+        draft_tokens.begin() + static_cast<std::ptrdiff_t>(reference_accepted)
+    );
+    if (reference_accepted < draft_tokens.size()) {
+        reference_committed_tokens.push_back(target_tokens[reference_accepted]);
+    } else if (include_bonus) {
+        reference_committed_tokens.push_back(target_tokens[draft_tokens.size()]);
+    }
+
+    const std::size_t authoritative_target_count = accepted < draft_tokens.size()
+        ? accepted + 1U
+        : verification_target_tokens.size();
+    const bool verification_targets_match = std::equal(
+        verification_target_tokens.begin(),
+        verification_target_tokens.begin() + static_cast<std::ptrdiff_t>(authoritative_target_count),
+        target_tokens.begin()
+    );
+
+    Context reference = runtime.make_context();
+    restore_state(reference, prompt_state);
+    for (std::size_t index = 0; index < reference_committed_tokens.size(); ++index) {
+        const std::vector<llama_token> one_token{reference_committed_tokens[index]};
+        decode_tokens(reference, one_token, seed.initial_context_tokens.size() + index, true);
+    }
+    const llama_token reference_next = greedy_argmax(reference, runtime.vocabulary_size());
+    const std::vector<std::uint8_t> reference_state = snapshot_state(reference);
+
+    // The verifier batch is disposable. Reconstruct the committed path serially
+    // from the prompt snapshot so rollback never retains rejected or numerically
+    // batch-dependent memory state.
+    Context committed = runtime.make_context();
+    restore_state(committed, prompt_state);
     for (std::size_t index = 0; index < committed_tokens.size(); ++index) {
         const std::vector<llama_token> one_token{committed_tokens[index]};
-        decode_tokens(serial, one_token, seed.initial_context_tokens.size() + index, true);
+        decode_tokens(committed, one_token, seed.initial_context_tokens.size() + index, true);
     }
-    const llama_token serial_next = greedy_argmax(serial, runtime.vocabulary_size());
-    const std::vector<std::uint8_t> serial_state = snapshot_state(serial);
+    const llama_token committed_next = greedy_argmax(committed, runtime.vocabulary_size());
+    const std::vector<std::uint8_t> committed_state = snapshot_state(committed);
 
-    Context batched = runtime.make_context();
-    restore_state(batched, prompt_state);
-    decode_tokens(batched, committed_tokens, seed.initial_context_tokens.size(), true);
-    const llama_token batched_next = greedy_argmax(batched, runtime.vocabulary_size());
-    const std::vector<std::uint8_t> batched_state = snapshot_state(batched);
-
-    const bool state_matches = serial_state == batched_state;
-    const bool continuation_matches = serial_next == batched_next;
+    const bool state_matches = reference_state == committed_state;
+    const bool continuation_matches = reference_next == committed_next;
+    const bool successful = verification_targets_match && state_matches && continuation_matches;
     Json::Object result = result_base(
         kVerifySchema,
         "verify",
-        state_matches && continuation_matches ? "ok" : "mismatch"
+        successful ? "ok" : "mismatch"
     );
     result["generation_mode"] = Json("greedy_argmax");
     result["greedy_tie_break"] = Json("lowest-token-id/v1");
     result["state_export"] = Json(kStateExport);
-    result["reconstruction"] = Json("serial-vs-one-batch/v1");
+    result["reconstruction"] = Json("batch-score+serial-canonical-commit/v2");
     result["seed_id"] = Json(seed.seed_id);
     result["case_id"] = Json(case_id);
     result["target_tokens"] = token_array(target_tokens);
+    result["verification_target_tokens"] = token_array(verification_target_tokens);
+    result["verification_targets_match"] = Json(verification_targets_match);
     result["vocabulary_size"] = Json(static_cast<std::int64_t>(runtime.vocabulary_size()));
     result["accepted_draft_tokens"] = Json(static_cast<std::int64_t>(accepted));
+    result["reference_accepted_draft_tokens"] = Json(static_cast<std::int64_t>(reference_accepted));
     result["correction_token"] = std::move(correction);
     result["bonus_token"] = std::move(bonus);
     result["committed_tokens"] = token_array(committed_tokens);
+    result["reference_committed_tokens"] = token_array(reference_committed_tokens);
     result["prompt_state_sha256"] = Json(sha256_hex(prompt_state));
     result["prompt_state_bytes"] = Json(static_cast<std::int64_t>(prompt_state.size()));
-    result["serial_state_sha256"] = Json(sha256_hex(serial_state));
-    result["serial_state_bytes"] = Json(static_cast<std::int64_t>(serial_state.size()));
-    result["batched_state_sha256"] = Json(sha256_hex(batched_state));
-    result["batched_state_bytes"] = Json(static_cast<std::int64_t>(batched_state.size()));
-    result["serial_mutable_state_digest"] = Json(sha256_hex(serial_state));
-    result["speculative_mutable_state_digest"] = Json(sha256_hex(batched_state));
-    result["mutable_state_digest"] = Json(sha256_hex(serial_state));
+    result["reference_state_sha256"] = Json(sha256_hex(reference_state));
+    result["reference_state_bytes"] = Json(static_cast<std::int64_t>(reference_state.size()));
+    result["committed_state_sha256"] = Json(sha256_hex(committed_state));
+    result["committed_state_bytes"] = Json(static_cast<std::int64_t>(committed_state.size()));
+    result["verifier_draft_state_sha256"] = Json(sha256_hex(verifier_draft_state));
+    result["verifier_draft_state_bytes"] = Json(static_cast<std::int64_t>(verifier_draft_state.size()));
+    result["reference_mutable_state_digest"] = Json(sha256_hex(reference_state));
+    result["committed_mutable_state_digest"] = Json(sha256_hex(committed_state));
+    result["mutable_state_digest"] = Json(sha256_hex(committed_state));
     result["state_matches"] = Json(state_matches);
-    result["serial_next_token"] = Json(static_cast<std::int64_t>(serial_next));
-    result["batched_next_token"] = Json(static_cast<std::int64_t>(batched_next));
+    result["reference_next_token"] = Json(static_cast<std::int64_t>(reference_next));
+    result["committed_next_token"] = Json(static_cast<std::int64_t>(committed_next));
     result["continuation_matches"] = Json(continuation_matches);
     result["configuration"] = runtime_echo(config);
-    result["observed_context"] = observed_context(serial);
+    result["observed_context"] = observed_context(committed);
     result["tokenization_boundary"] = Json("caller-supplied-raw-token-ids/v1");
-    result["state_api"] = Json("llama_state_get_data+llama_state_set_data/full-context/v1");
+    result["state_api"] = Json(kStateApi);
     result["declared_identity_fields"] = Json("caller-declared-not-verified-by-bridge/v1");
     result["chat_template_applied"] = Json(false);
     result["thinking_mode_applied"] = Json(false);
     result["sampler_rng_state"] = Json("not-applicable-no-sampler-or-rng-in-greedy-bridge/v1");
-    return {Json(std::move(result)), state_matches && continuation_matches};
+    return {Json(std::move(result)), successful};
 }
 
 HandledResponse handle_request(const Json & request, const char * expected_operation) {

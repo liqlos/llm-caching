@@ -47,11 +47,11 @@ def _runtime_fingerprint(library: Path, model: Path) -> str:
 
 def _capabilities(library: Path, model: Path, **overrides: object) -> dict[str, object]:
     response: dict[str, object] = {
-        "schema_version": "pcss.llama-bridge-capabilities/v1",
+        "schema_version": "pcss.llama-bridge-capabilities/v2",
         "operation": "capabilities",
         "status": "ok",
         "backend": "llama.cpp",
-        "state_export": "full_context_state/v1",
+        "state_export": "model-architecture+memory-state/v2",
         "generation_mode": "greedy_argmax",
         "greedy_tie_break": "lowest-token-id/v1",
         "raw_token_ids": True,
@@ -68,13 +68,8 @@ def _capabilities(library: Path, model: Path, **overrides: object) -> dict[str, 
             "actual_n_threads": 2,
             "actual_n_threads_batch": 2,
         },
-        "state_components": [
-            "llama_context_full_state",
-            "memory",
-            "logits",
-            "embedding_if_enabled",
-        ],
-        "state_api": "llama_state_get_data+llama_state_set_data/full-context/v1",
+        "state_components": ["model_architecture_identity", "llama_memory"],
+        "state_api": "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2",
         "sampler_rng_state": "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1",
         "probe_token": 0,
         "probe_state_sha256": "b" * 64,
@@ -104,34 +99,40 @@ def _verify_response(
     **overrides: object,
 ) -> dict[str, object]:
     response: dict[str, object] = {
-        "schema_version": "pcss.llama-bridge-verify/v1",
+        "schema_version": "pcss.llama-bridge-verify/v2",
         "operation": "verify",
         "status": "ok",
         "backend": "llama.cpp",
         "generation_mode": "greedy_argmax",
         "greedy_tie_break": "lowest-token-id/v1",
-        "state_export": "full_context_state/v1",
-        "reconstruction": "serial-vs-one-batch/v1",
+        "state_export": "model-architecture+memory-state/v2",
+        "reconstruction": "batch-score+serial-canonical-commit/v2",
         "seed_id": "fixture-seed-001",
         "case_id": "partial-rejection",
         "target_tokens": list(target_tokens),
+        "verification_target_tokens": list(target_tokens),
+        "verification_targets_match": True,
         "vocabulary_size": 128,
         "accepted_draft_tokens": accepted_draft_tokens,
+        "reference_accepted_draft_tokens": accepted_draft_tokens,
         "correction_token": correction_token,
         "bonus_token": bonus_token,
         "committed_tokens": list(committed_tokens),
+        "reference_committed_tokens": list(committed_tokens),
         "prompt_state_sha256": "c" * 64,
         "prompt_state_bytes": 64,
-        "serial_state_sha256": digest,
-        "serial_state_bytes": 72,
-        "batched_state_sha256": digest,
-        "batched_state_bytes": 72,
-        "serial_mutable_state_digest": digest,
-        "speculative_mutable_state_digest": digest,
+        "reference_state_sha256": digest,
+        "reference_state_bytes": 72,
+        "committed_state_sha256": digest,
+        "committed_state_bytes": 72,
+        "verifier_draft_state_sha256": "e" * 64,
+        "verifier_draft_state_bytes": 80,
+        "reference_mutable_state_digest": digest,
+        "committed_mutable_state_digest": digest,
         "mutable_state_digest": digest,
         "state_matches": True,
-        "serial_next_token": 13,
-        "batched_next_token": 13,
+        "reference_next_token": 13,
+        "committed_next_token": 13,
         "continuation_matches": True,
         "configuration": _configuration(library, model),
         "observed_context": {
@@ -141,7 +142,7 @@ def _verify_response(
             "actual_n_threads_batch": 2,
         },
         "tokenization_boundary": "caller-supplied-raw-token-ids/v1",
-        "state_api": "llama_state_get_data+llama_state_set_data/full-context/v1",
+        "state_api": "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2",
         "sampler_rng_state": "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1",
         "declared_identity_fields": "caller-declared-not-verified-by-bridge/v1",
         "chat_template_applied": False,
@@ -320,7 +321,7 @@ def test_malformed_capability_state_fields_fail_closed(tmp_path: Path, monkeypat
     availability = adapter.availability()
 
     assert availability.execution_class == "NOT_RUN"
-    assert "full-state coverage" in availability.reason
+    assert "model-memory state coverage" in availability.reason
 
 
 def test_library_path_mismatch_is_not_target_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -463,9 +464,10 @@ def test_verify_maps_structured_native_mismatch_when_bridge_exits_nonzero(
             model,
             status="mismatch",
             state_matches=False,
-            batched_state_sha256="b" * 64,
-            batched_state_bytes=73,
-            speculative_mutable_state_digest="b" * 64,
+            committed_state_sha256="b" * 64,
+            committed_state_bytes=73,
+            committed_mutable_state_digest="b" * 64,
+            mutable_state_digest="b" * 64,
         ),
         verify_exit_status=1,
     )
@@ -475,6 +477,41 @@ def test_verify_maps_structured_native_mismatch_when_bridge_exits_nonzero(
 
     assert not outcome.reconstruction_matches
     assert outcome.continuation_matches
+
+
+def test_verify_maps_batch_target_divergence_as_measured_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(library, model),
+        verify_response=_verify_response(
+            library,
+            model,
+            status="mismatch",
+            verification_target_tokens=[7, 10, 12],
+            verification_targets_match=False,
+            correction_token=10,
+            committed_tokens=[7, 10],
+            reference_committed_tokens=[7, 8],
+            committed_state_sha256="b" * 64,
+            committed_mutable_state_digest="b" * 64,
+            mutable_state_digest="b" * 64,
+            state_matches=False,
+            committed_next_token=14,
+            continuation_matches=False,
+        ),
+        verify_exit_status=1,
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    outcome = adapter.verify(_case())
+
+    assert not outcome.verification_matches
+    assert outcome.committed_tokens == (7, 10)
+    assert not outcome.reconstruction_matches
+    assert not outcome.continuation_matches
 
 
 def test_verify_rejects_structured_mismatch_with_an_unexpected_exit_status(
@@ -545,7 +582,7 @@ def test_malformed_verify_response_fails_closed(tmp_path: Path, monkeypatch: pyt
     _write_bridge(
         bridge,
         capabilities=_capabilities(library, model),
-        verify_response={"schema_version": "pcss.llama-bridge-verify/v1"},
+        verify_response={"schema_version": "pcss.llama-bridge-verify/v2"},
     )
 
     assert adapter.availability().execution_class == "TARGET_BACKEND"

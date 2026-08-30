@@ -155,9 +155,9 @@ class TargetFixtureProvenance:
     runtime_configuration_fingerprint: str
 
     def __post_init__(self) -> None:
-        if self.schema_version != "pcss.target-verifier-fixture-provenance/v1":
+        if self.schema_version != "pcss.target-verifier-fixture-provenance/v2":
             raise ContractError("unsupported target fixture provenance schema")
-        if self.reference_method != "serial-greedy-full-state/v1":
+        if self.reference_method != "serial-greedy-memory-state/v2":
             raise ContractError("unsupported target fixture reference method")
         _sha256(self.model_artifact_sha256, "target_fixture_provenance.model_artifact_sha256")
         _sha256(
@@ -204,6 +204,7 @@ class AdapterOutcome:
     bonus_token: int | None
     committed_tokens: tuple[int, ...]
     mutable_state_digest: str
+    verification_matches: bool = True
     reconstruction_matches: bool = True
     continuation_matches: bool = True
 
@@ -215,8 +216,11 @@ class AdapterOutcome:
                 require_int(value, f"outcome.{field_name}", minimum=0)
         _tokens(self.committed_tokens, "outcome.committed_tokens", allow_empty=True)
         require_string(self.mutable_state_digest, "outcome.mutable_state_digest")
-        if not isinstance(self.reconstruction_matches, bool) or not isinstance(self.continuation_matches, bool):
-            raise ContractError("outcome reconstruction and continuation matches must be booleans")
+        if not all(
+            isinstance(value, bool)
+            for value in (self.verification_matches, self.reconstruction_matches, self.continuation_matches)
+        ):
+            raise ContractError("outcome verification, reconstruction, and continuation matches must be booleans")
 
 
 class VerifierAdapter(Protocol):
@@ -356,10 +360,12 @@ class VerifierHarness:
         for case in cases:
             outcome = self.adapter.verify(case)
             failures: list[str] = []
+            if not outcome.verification_matches:
+                failures.append("batched_verification_target_mismatch")
             if not outcome.reconstruction_matches:
-                failures.append("serial_batched_state_mismatch")
+                failures.append("reference_committed_state_mismatch")
             if not outcome.continuation_matches:
-                failures.append("serial_batched_continuation_mismatch")
+                failures.append("reference_committed_continuation_mismatch")
             if outcome.committed_tokens != case.expected_committed_tokens:
                 failures.append("committed_tokens_mismatch")
             digest_matches = outcome.mutable_state_digest == case.expected_state_digest

@@ -37,11 +37,11 @@ from .verifier_runner import observe_target_host
 
 CONFIG_SCHEMA_VERSION = "pcss.llamacpp-adapter-config/v1"
 SEEDS_SCHEMA_VERSION = "pcss.llamacpp-fixture-seeds/v1"
-FIXTURE_SCHEMA_VERSION = "pcss.m4-verifier-cases/v3"
-FIXTURE_PROVENANCE_SCHEMA_VERSION = "pcss.target-verifier-fixture-provenance/v1"
+FIXTURE_SCHEMA_VERSION = "pcss.m4-verifier-cases/v4"
+FIXTURE_PROVENANCE_SCHEMA_VERSION = "pcss.target-verifier-fixture-provenance/v2"
 BRIDGE_REQUEST_SCHEMA_VERSION = "pcss.llama-bridge-request/v1"
-BRIDGE_RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-reference/v1"
-REFERENCE_METHOD = "serial-greedy-full-state/v1"
+BRIDGE_RESPONSE_SCHEMA_VERSION = "pcss.llama-bridge-reference/v2"
+REFERENCE_METHOD = "serial-greedy-memory-state/v2"
 
 _CONFIG_FIELDS = {
     "schema_version",
@@ -119,11 +119,11 @@ _BRIDGE_OBSERVED_CONTEXT_FIELDS = {
     "actual_n_threads_batch",
 }
 _SUITE_FILENAMES = {
-    "k_sweep": "k-sweep.v3.json",
-    "perfect_draft": "perfect-draft.v3.json",
-    "provider_floor": "provider-floor.v3.json",
-    "forced_rejection": "forced-rejection.v3.json",
-    "long_mixed": "long-mixed.v3.json",
+    "k_sweep": "k-sweep.v4.json",
+    "perfect_draft": "perfect-draft.v4.json",
+    "provider_floor": "provider-floor.v4.json",
+    "forced_rejection": "forced-rejection.v4.json",
+    "long_mixed": "long-mixed.v4.json",
 }
 
 
@@ -394,11 +394,11 @@ def _run_reference(
         raise ContractError("pcss_llama_bridge reference response is not a successful llama.cpp result")
     if response["generation_mode"] != "greedy_argmax" or response["greedy_tie_break"] != "lowest-token-id/v1":
         raise ContractError("pcss_llama_bridge reference response is not deterministic serial greedy generation")
-    if response["state_export"] != "full_context_state/v1":
-        raise ContractError("pcss_llama_bridge reference response does not declare full-context state export")
+    if response["state_export"] != "model-architecture+memory-state/v2":
+        raise ContractError("pcss_llama_bridge reference response does not declare model-memory state export")
     if response["tokenization_boundary"] != "caller-supplied-raw-token-ids/v1":
         raise ContractError("pcss_llama_bridge reference response has an unexpected tokenization boundary")
-    if response["state_api"] != "llama_state_get_data+llama_state_set_data/full-context/v1":
+    if response["state_api"] != "llama_state_get_data+llama_state_set_data/model-architecture+memory/v2":
         raise ContractError("pcss_llama_bridge reference response has an unexpected state API")
     if response["sampler_rng_state"] != "not-applicable-no-sampler-or-rng-in-greedy-bridge/v1":
         raise ContractError("pcss_llama_bridge reference response has an unexpected sampler/RNG state")
@@ -792,7 +792,7 @@ def build_target_fixtures(
         payload={
             "schema_version": "pcss.llamacpp-fixture-build/v1",
             "claim_boundary": {
-                "fixture_source": "serial-greedy-full-state/v1",
+        "fixture_source": REFERENCE_METHOD,
                 "not_claimed": [
                     "hardware_performance",
                     "timing",
