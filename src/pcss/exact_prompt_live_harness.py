@@ -202,12 +202,21 @@ def run_exact_prompt_live_harness(
         })
     confidence = clustered_bootstrap_ci(ratios_by_request)
     analysis = {
+        "hypothesis": (
+            "On the fixed mixed workload, the paired serial-over-candidate end-to-end decode ratio "
+            "has a clustered 95% lower bound greater than 1.0 while visible outputs, final state, "
+            "and continuation remain exact."
+        ),
+        "kill_gate": (
+            "Declare NO_GO_LIVE_PENDING_MIXED if any native output/state check fails, or if the "
+            "clustered 95% lower bound of the paired ratio is less than or equal to 1.0."
+        ),
         "case_count": len(cases),
         "workload_clusters": {cluster: sum(case["workload_cluster"] == cluster for case in cases)
                               for cluster in ("exact_hit", "edited_miss", "controlled_rejection")},
         "all_exact_output_and_state": all(case["response"]["exact_output_and_state"] for case in cases),
         "paired_serial_over_lookup_inclusive_candidate_ratio": asdict(confidence),
-        "decision": "EXACT_PROMPT_ARCHIVE_HARNESS_POSITIVE" if confidence.lower > 1.0 else "EXACT_PROMPT_ARCHIVE_HARNESS_INCONCLUSIVE",
+        "decision": "LIVE_PENDING_MIXED_POSITIVE" if confidence.lower > 1.0 else "NO_GO_LIVE_PENDING_MIXED",
     }
     receipt = make_receipt(
         evidence_class="LOCAL_MEASURED",
