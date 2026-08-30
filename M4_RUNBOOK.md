@@ -150,6 +150,21 @@ production decode integration or a general PCSS speedup claim.
   and raw SHA-256 is `daa83b22201f8c2d5f40f13a90943d86df7004e38c3fc28af13cb60832eaae73`.
   This selects neither a production eviction policy nor a runtime capacity; it
   is a causal offline cache-membership result only.
+- The same fixed-byte/probe scope test was then emitted in compact, inspectable
+  receipts at revision `615163ffd44e4410d62b61f5848efeb74d38b5c1`. With 4096
+  source bytes and two probes, global/hierarchical widening gained only one
+  selected oracle token over repository/block isolation on each trace family
+  (2377 versus 2376 synthetic; 354 versus 353 source-edit), while selecting
+  substantially more zero-accept candidates (22 versus 1; 63 versus 25).
+  The offline decision is therefore repository/block isolation as the next
+  read-only default; widening has no demonstrated incremental value yet. The
+  sealed raw receipts are
+  `/Users/ai-server/Projects/pcss-artifacts/runs/strategy-synthetic-615163f-20260830/raw/strategy.raw.json`
+  (SHA-256 `b06c650f57aa93bc0b6fffc56b48068a31f0c06bff34b89cf5a2ee3989bb22e6`)
+  and
+  `/Users/ai-server/Projects/pcss-artifacts/runs/strategy-source-edit-615163f-20260830/raw/strategy.raw.json`
+  (SHA-256 `b4fe4b6ee689c85294cc20a8ca33833fa5286dbb1a7b20218b53e32f9ae75710`).
+  This is not a claim about target verification cost or end-to-end speed.
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
