@@ -1,0 +1,84 @@
+{
+  "prompts": [
+    {
+      "parent_revision": null,
+      "provenance_family": "repository",
+      "record_id": "clamp-history",
+      "repository_id": "synthetic-repo-a",
+      "request_id": "clamp-request-1",
+      "revision": "rev-1",
+      "semantic_block_id": "python-edit",
+      "session_id": "session-a1",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "rev-1",
+      "provenance_family": "repository",
+      "record_id": "json-history",
+      "repository_id": "synthetic-repo-b",
+      "request_id": "json-request-1",
+      "revision": "rev-2",
+      "semantic_block_id": "python-edit",
+      "session_id": "session-b1",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "rev-2",
+      "provenance_family": "repository",
+      "record_id": "typescript-history",
+      "repository_id": "synthetic-repo-c",
+      "request_id": "typescript-request-1",
+      "revision": "rev-3",
+      "semantic_block_id": "typescript-edit",
+      "session_id": "session-c1",
+      "source_class": "visible_code",
+      "text": "Complete this TypeScript function. Return code only.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "rev-3",
+      "provenance_family": "repository",
+      "record_id": "clamp-repeat-target",
+      "repository_id": "synthetic-repo-a",
+      "request_id": "clamp-request-2",
+      "revision": "rev-4",
+      "semantic_block_id": "python-edit",
+      "session_id": "session-a2",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "rev-4",
+      "provenance_family": "repository",
+      "record_id": "json-repeat-target",
+      "repository_id": "synthetic-repo-b",
+      "request_id": "json-request-2",
+      "revision": "rev-5",
+      "semantic_block_id": "python-edit",
+      "session_id": "session-b2",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "rev-5",
+      "provenance_family": "repository",
+      "record_id": "typescript-repeat-target",
+      "repository_id": "synthetic-repo-c",
+      "request_id": "typescript-request-2",
+      "revision": "rev-6",
+      "semantic_block_id": "typescript-edit",
+      "session_id": "session-c2",
+      "source_class": "visible_code",
+      "text": "Complete this TypeScript function. Return code only.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n",
+      "workflow_stage": "edit"
+    }
+  ],
+  "schema_version": "pcss.target-trace-prompts/v1",
+  "tokens_to_generate": 48
+}
