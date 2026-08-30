@@ -196,8 +196,9 @@ production decode integration or a general PCSS speedup claim.
 - A larger, distinct Qwen3-8B edit corpus at revision
   `71c72509895ca1b595f8fe6cdf0ed1aeddd0e7f4` now supplies 24 real target
   traces (12 chronological source-to-edited-target pairs, 1,152 proposal
-  positions) with hidden reasoning excluded. The generation receipt is
-  `LOCAL_MEASURED TRACE_WORKLOAD_GENERATED`, while its two analyses are
+  positions) with hidden reasoning excluded. Its generation receipt is
+  `LOCAL_MEASURED TRACE_WORKLOAD_GENERATED` (SHA-256
+  `f359dd41491cddfd04dfbbbb2153f3c0669316a5458e71a66eee73fd70f678b5`), while its two analyses are
   `SIMULATOR VERIFIED_OFFLINE`: `raw/10-offline-replay.json` (SHA-256
   `c71a693ac146d8506ce8b1e80fb7e703212c19428674429412310438d2cfdb00`) and
   `raw/11-protocol-bakeoff.json` (SHA-256
