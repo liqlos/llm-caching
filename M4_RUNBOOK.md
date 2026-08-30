@@ -224,6 +224,26 @@ production decode integration or a general PCSS speedup claim.
   is authorized from it. In particular, 0 of 722 candidate opportunities had
   two independent provenance families; the simulator observed just one prior
   suppression and performed no runtime suppression.
+- A separate cross-repository shared-primitive positive control at revision
+  `6622227b0a0d073dd173356691b3cde1454f4e2f` establishes the boundary of that
+  negative result without disguising an artificial workload as a production
+  trace. It contains 12 public code prompts generated first in synthetic
+  library repositories and then identically in disjoint synthetic consumer
+  repositories. The target trace is `LOCAL_MEASURED`, reasoning-excluding, and
+  sealed under
+  `/Users/ai-server/Projects/pcss-artifacts/runs/cross-repo-positive-6622227-20260830`:
+  generation SHA-256 `0211e936a8eeeae923bc7f640455a8d71960a940ebd7c914b6d2f01580d3e22c`,
+  trace SHA-256 `f57757664cf9b9bd99befab812d3515e6a24b8dc6eb73461040e113ea48ef655`,
+  and simulator replay SHA-256
+  `fd311a18b953a3b751d4f06a286f82961bf9d4b2327e54e31622729a29c3778c`.
+  Here, and only because no stronger same-repository source exists,
+  persistent history earns 10,957 of 13,411 oracle accepted-prefix tokens
+  (48.09% persistent-unique ORR). This is a positive-control capability
+  result—not a natural-workload estimate, privacy-policy choice, online
+  retrieval policy, verifier result, or speedup claim. Its capacity and scope
+  figures may not select an eviction policy: the control deliberately requires
+  cross-repository widening and its policy conditions do not represent the
+  edit corpus above.
 - Preserved roots `pending-live-648cd7d` and `pending-live-7c0318e` have no
   benchmark receipt. They failed closed on response-contract validation and
   must not be reported as performance results.
