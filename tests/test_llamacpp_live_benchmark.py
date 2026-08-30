@@ -78,7 +78,12 @@ def response_for(request: dict) -> dict:
         "measurement_scope": "decode-and-synchronize/prefill-restore-provider-excluded/v1",
         "provider_integration": "static-trace-candidate/provider-lookup-excluded/v1",
         "exact_output_and_state": True,
-        "configuration": runtime,
+        "configuration": {
+            "model_artifact": request["model_artifact"],
+            "llama_cpp_library": request["llama_cpp_library"],
+            "llama_cpp_revision": request["llama_cpp_revision"],
+            "runtime": runtime,
+        },
         "observed_context": {
             "actual_n_ctx": runtime["n_ctx"], "actual_n_batch": runtime["n_batch"],
             "actual_n_threads": runtime["n_threads"], "actual_n_threads_batch": runtime["n_threads_batch"],

@@ -183,7 +183,13 @@ def _validate_response(response: Mapping[str, Any], request: Mapping[str, Any], 
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise ContractError("benchmark final state digest is invalid")
     _positive_int(response["final_state_bytes"], "benchmark final_state_bytes")
-    if response["configuration"] != dict(config.runtime):
+    expected_configuration = {
+        "model_artifact": str(config.model_artifact),
+        "llama_cpp_library": str(config.llama_cpp_library),
+        "llama_cpp_revision": config.llama_cpp_revision,
+        "runtime": dict(config.runtime),
+    }
+    if response["configuration"] != expected_configuration:
         raise ContractError("benchmark response configuration differs from configured runtime")
     observed = response["observed_context"]
     expected_observed = {
