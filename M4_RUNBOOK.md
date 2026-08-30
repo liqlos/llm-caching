@@ -172,6 +172,18 @@ production decode integration or a general PCSS speedup claim.
   microseconds. This is an external sealed-archive plus isolated-bridge harness,
   not a llama.cpp provider hook, end-to-end request measurement, representative
   workload result, or production decode integration.
+- The same harness was then routed through the runtime-neutral
+  `ExactPromptArchiveShadowProvider` ABI rather than direct archive calls.
+  Every measured repetition records `begin_request`, sealed-archive `proposal`,
+  `feedback(not_verified)`, and `end_request`; the feedback deliberately does
+  not mislabel pending-token bridge acceptance/bonus telemetry as provider
+  attribution. The fresh 12-case target receipt is `LOCAL_MEASURED
+  EXACT_PROMPT_ARCHIVE_HARNESS_POSITIVE`: all output/state exact, 256 accepted
+  candidate tokens per case, zero checkpoints/reconstructions, paired ratio
+  `1.080248`, clustered 95% CI `[1.053615, 1.106674]` (raw SHA-256
+  `2499d118926e8e35309a59022059750233f5ebbdbe9d0b1df19c698afd5d3c3e`).
+  This proves ABI lifecycle through the external archive-to-isolated-bridge
+  harness only; no llama.cpp provider hook or production decode path exists.
 - The same sealed archive's edited-request all-miss floor is separately
   `LOCAL_MEASURED`: all twelve diverse edited prompts returned zero candidates
   throughout preflight, warmup, and measurement; no target verification was
