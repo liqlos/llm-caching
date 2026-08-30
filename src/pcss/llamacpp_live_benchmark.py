@@ -62,7 +62,9 @@ def _record_by_id(records: Sequence[Mapping[str, Any]], record_id: str) -> Mappi
     return matches[0]
 
 
-def _pair(records: Sequence[Mapping[str, Any]], pair_spec: str) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+def _pair(
+    records: Sequence[Mapping[str, Any]], pair_spec: str, *, pair_mode: str = "exact_repeat"
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
     parts = pair_spec.split(":")
     if len(parts) != 2 or not all(parts):
         raise ContractError("benchmark pair must be SOURCE_RECORD_ID:TARGET_RECORD_ID")
@@ -75,11 +77,13 @@ def _pair(records: Sequence[Mapping[str, Any]], pair_spec: str) -> tuple[Mapping
         raise ContractError("benchmark pair must remain inside one repository")
     if any(source[field] != target[field] for field in _FINGERPRINT_FIELDS):
         raise ContractError("benchmark pair fingerprints are incompatible")
+    if pair_mode not in {"exact_repeat", "source_reuse"}:
+        raise ContractError("benchmark pair_mode must be exact_repeat or source_reuse")
     source_content, target_content = source["content"], target["content"]
-    if source_content["prompt_token_ids"] != target_content["prompt_token_ids"]:
-        raise ContractError("controlled benchmark requires an exact prompt-token repeat")
-    if source_content["committed_token_ids"] != target_content["committed_token_ids"]:
-        raise ContractError("controlled benchmark requires an exact committed-token repeat")
+    if pair_mode == "exact_repeat" and source_content["prompt_token_ids"] != target_content["prompt_token_ids"]:
+        raise ContractError("controlled exact-repeat benchmark requires identical prompt tokens")
+    if pair_mode == "exact_repeat" and source_content["committed_token_ids"] != target_content["committed_token_ids"]:
+        raise ContractError("controlled exact-repeat benchmark requires identical committed tokens")
     if source_content["committed_token_status"] != "complete" or target_content["committed_token_status"] != "complete":
         raise ContractError("controlled benchmark requires complete committed token streams")
     return source, target
@@ -146,7 +150,13 @@ def _positive_int(value: object, field: str) -> int:
     return require_int(value, field, minimum=1)
 
 
-def _validate_response(response: Mapping[str, Any], request: Mapping[str, Any], config: BridgeConfig) -> dict[str, Any]:
+def _validate_response(
+    response: Mapping[str, Any],
+    request: Mapping[str, Any],
+    config: BridgeConfig,
+    *,
+    expected_authoritative_tokens: Sequence[int] | None = None,
+) -> dict[str, Any]:
     require_exact_keys(response, _RESPONSE_FIELDS, "benchmark response")
     benchmark = request["benchmark"]
     expected = {
@@ -177,8 +187,13 @@ def _validate_response(response: Mapping[str, Any], request: Mapping[str, Any], 
     for field, value in expected.items():
         if response[field] != value:
             raise ContractError(f"benchmark response {field} differs from request contract")
-    if response["authoritative_tokens"] != benchmark["candidate_tokens"][: benchmark["output_tokens"]]:
-        raise ContractError("benchmark target output differs from the trace candidate")
+    expected_tokens = list(
+        benchmark["candidate_tokens"][: benchmark["output_tokens"]]
+        if expected_authoritative_tokens is None
+        else expected_authoritative_tokens[: benchmark["output_tokens"]]
+    )
+    if response["authoritative_tokens"] != expected_tokens:
+        raise ContractError("benchmark target output differs from the recorded target trace")
     digest = response["final_state_sha256"]
     if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise ContractError("benchmark final state digest is invalid")
@@ -233,6 +248,7 @@ def run_live_benchmark(
     output_tokens: int = 48,
     warmup_repetitions: int = 2,
     measurement_repetitions: int = 8,
+    pair_mode: str = "exact_repeat",
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
@@ -259,12 +275,15 @@ def run_live_benchmark(
     ratios_by_request: dict[str, list[float]] = {}
     request_fingerprints: dict[str, str] = {}
     for pair_spec in pairs:
-        source, target = _pair(records, pair_spec)
+        source, target = _pair(records, pair_spec, pair_mode=pair_mode)
         request = _request(
             config, source, target, k=k, output_tokens=output_tokens,
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
         )
-        response = _validate_response(bridge_runner(config, request), request, config)
+        response = _validate_response(
+            bridge_runner(config, request), request, config,
+            expected_authoritative_tokens=target["content"]["committed_token_ids"],
+        )
         ratios = []
         for row in response["measurements"]:
             paired_serial = (row["serial_before_ns"] + row["serial_after_ns"]) / 2
@@ -295,9 +314,9 @@ def run_live_benchmark(
         },
         status=analysis["decision"],
         payload={
-            "kind": "controlled_exact_repeat_pending_live_decode",
+            "kind": f"controlled_{pair_mode}_pending_live_decode",
             "host_identity": host.as_dict(), "cases": cases, "analysis": analysis,
-            "runtime_claim": "controlled exact-repeat decode-only A/B; provider lookup, prefill, and restore excluded; not general PCSS speedup",
+            "runtime_claim": f"controlled {pair_mode} decode-only A/B; provider lookup, prefill, and restore excluded; not general PCSS speedup",
             "not_claimed": ["representative workload speedup", "end-to-end provider speedup", "profitable production K", "thermal sustainability"],
         },
     )
@@ -319,6 +338,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-tokens", type=int, default=48)
     parser.add_argument("--warmup-repetitions", type=int, default=2)
     parser.add_argument("--measurement-repetitions", type=int, default=8)
+    parser.add_argument("--pair-mode", choices=("exact_repeat", "source_reuse"), default="exact_repeat")
     return parser
 
 
@@ -331,6 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repository_root=parsed.repository_root, command_arguments=arguments, k=parsed.k,
         output_tokens=parsed.output_tokens, warmup_repetitions=parsed.warmup_repetitions,
         measurement_repetitions=parsed.measurement_repetitions,
+        pair_mode=parsed.pair_mode,
     )
     return 0
 

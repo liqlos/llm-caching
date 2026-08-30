@@ -1,0 +1,84 @@
+{
+  "prompts": [
+    {
+      "parent_revision": null,
+      "provenance_family": "repository",
+      "record_id": "clamp-source",
+      "repository_id": "synthetic-edit-repo-a",
+      "request_id": "clamp-edit-request-1",
+      "revision": "edit-a-1",
+      "semantic_block_id": "python-edit",
+      "session_id": "edit-session-a1",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": null,
+      "provenance_family": "repository",
+      "record_id": "json-source",
+      "repository_id": "synthetic-edit-repo-b",
+      "request_id": "json-edit-request-1",
+      "revision": "edit-b-1",
+      "semantic_block_id": "python-edit",
+      "session_id": "edit-session-b1",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": null,
+      "provenance_family": "repository",
+      "record_id": "typescript-source",
+      "repository_id": "synthetic-edit-repo-c",
+      "request_id": "typescript-edit-request-1",
+      "revision": "edit-c-1",
+      "semantic_block_id": "typescript-edit",
+      "session_id": "edit-session-c1",
+      "source_class": "visible_code",
+      "text": "Complete this TypeScript function. Return code only.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "edit-a-1",
+      "provenance_family": "repository",
+      "record_id": "clamp-edited-target",
+      "repository_id": "synthetic-edit-repo-a",
+      "request_id": "clamp-edit-request-2",
+      "revision": "edit-a-2",
+      "semantic_block_id": "python-edit",
+      "session_id": "edit-session-a2",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only. Clamp inclusively and convert a float result to int.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "edit-b-1",
+      "provenance_family": "repository",
+      "record_id": "json-edited-target",
+      "repository_id": "synthetic-edit-repo-b",
+      "request_id": "json-edit-request-2",
+      "revision": "edit-b-2",
+      "semantic_block_id": "python-edit",
+      "session_id": "edit-session-b2",
+      "source_class": "visible_code",
+      "text": "Complete this Python function. Return code only. Include count and an empty items list.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n",
+      "workflow_stage": "edit"
+    },
+    {
+      "parent_revision": "edit-c-1",
+      "provenance_family": "repository",
+      "record_id": "typescript-edited-target",
+      "repository_id": "synthetic-edit-repo-c",
+      "request_id": "typescript-edit-request-2",
+      "revision": "edit-c-2",
+      "semantic_block_id": "typescript-edit",
+      "session_id": "edit-session-c2",
+      "source_class": "visible_code",
+      "text": "Complete this TypeScript function. Return code only. The normalized result must be uppercase.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n",
+      "workflow_stage": "edit"
+    }
+  ],
+  "schema_version": "pcss.target-trace-prompts/v1",
+  "tokens_to_generate": 48
+}

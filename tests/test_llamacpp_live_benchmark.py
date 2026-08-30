@@ -105,8 +105,10 @@ def test_pair_requires_chronological_cross_session_exact_repeat() -> None:
     assert _pair([source, target], "source:target") == (source, target)
 
     target["content"]["committed_token_ids"][-1] = 99
-    with pytest.raises(ContractError, match="exact committed-token repeat"):
+    with pytest.raises(ContractError, match="identical committed tokens"):
         _pair([source, target], "source:target")
+
+    assert _pair([source, target], "source:target", pair_mode="source_reuse") == (source, target)
 
 
 def test_response_contract_accepts_only_exact_target_output_and_state() -> None:
@@ -119,7 +121,7 @@ def test_response_contract_accepts_only_exact_target_output_and_state() -> None:
     assert len(_validate_response(response, request, config())["measurements"]) == 2
 
     response["authoritative_tokens"][-1] = 99
-    with pytest.raises(ContractError, match="target output differs"):
+    with pytest.raises(ContractError, match="recorded target trace"):
         _validate_response(response, request, config())
 
 
