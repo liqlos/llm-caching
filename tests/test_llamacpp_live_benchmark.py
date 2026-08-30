@@ -151,3 +151,21 @@ def test_request_enforces_pending_batch_and_candidate_bounds() -> None:
         _request(config(), source, target, k=8, output_tokens=4, warmup_repetitions=0, measurement_repetitions=2)
     with pytest.raises(ContractError, match="candidate length"):
         _request(config(), source, target, k=2, output_tokens=5, warmup_repetitions=0, measurement_repetitions=2)
+
+
+def test_request_can_force_one_deterministic_rejection() -> None:
+    source = record("source", chronological_index=1, session_id="one")
+    target = record("target", chronological_index=2, session_id="two")
+    request = _request(
+        config(), source, target, k=2, output_tokens=4, warmup_repetitions=0,
+        measurement_repetitions=2, forced_rejection_position=2,
+    )
+
+    assert request["benchmark"]["candidate_tokens"] == [20, 21, 20, 23]
+    assert source["content"]["committed_token_ids"] == [20, 21, 22, 23]
+
+    with pytest.raises(ContractError, match="outside the output boundary"):
+        _request(
+            config(), source, target, k=2, output_tokens=4, warmup_repetitions=0,
+            measurement_repetitions=2, forced_rejection_position=4,
+        )

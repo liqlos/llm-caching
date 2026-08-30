@@ -102,9 +102,10 @@ def _request(
     warmup_repetitions: int,
     measurement_repetitions: int,
     reanchor_min_tokens: int = 0,
+    forced_rejection_position: int | None = None,
 ) -> dict[str, Any]:
     prompt = tuple(target["content"]["prompt_token_ids"])
-    candidate = tuple(source["content"]["committed_token_ids"])
+    candidate = list(source["content"]["committed_token_ids"])
     if not prompt:
         raise ContractError("benchmark prompt token stream must not be empty")
     if k < 1 or k + 1 > config.runtime["n_batch"]:
@@ -115,6 +116,14 @@ def _request(
         raise ContractError("benchmark requires non-negative warmups and at least two measurements")
     if reanchor_min_tokens < 0 or reanchor_min_tokens > output_tokens:
         raise ContractError("benchmark reanchor_min_tokens is outside the output boundary")
+    if forced_rejection_position is not None:
+        if forced_rejection_position < 0 or forced_rejection_position >= output_tokens:
+            raise ContractError("forced rejection position is outside the output boundary")
+        original = candidate[forced_rejection_position]
+        replacement = next((token for token in candidate if token != original), None)
+        if replacement is None:
+            raise ContractError("forced rejection requires at least two distinct candidate tokens")
+        candidate[forced_rejection_position] = replacement
     return {
         "schema_version": REQUEST_SCHEMA_VERSION,
         "operation": "benchmark_pending",
@@ -268,6 +277,7 @@ def run_live_benchmark(
     measurement_repetitions: int = 8,
     pair_mode: str = "exact_repeat",
     reanchor_min_tokens: int = 0,
+    forced_rejection_position: int | None = None,
     target_observer: Callable[[], TargetHostIdentity] = observe_target_host,
     bridge_runner: Callable[[BridgeConfig, Mapping[str, Any]], Mapping[str, Any]] = _run_bridge,
 ) -> ResultReceipt:
@@ -299,6 +309,7 @@ def run_live_benchmark(
             config, source, target, k=k, output_tokens=output_tokens,
             warmup_repetitions=warmup_repetitions, measurement_repetitions=measurement_repetitions,
             reanchor_min_tokens=reanchor_min_tokens,
+            forced_rejection_position=forced_rejection_position,
         )
         response = _validate_response(
             bridge_runner(config, request), request, config,
@@ -323,6 +334,7 @@ def run_live_benchmark(
         "decision": "CONTROLLED_LIVE_DECODE_POSITIVE" if confidence.lower > 1.0 else "CONTROLLED_LIVE_DECODE_INCONCLUSIVE",
     }
     revision = resolve_git_revision(repository_root)
+    experiment_kind = "forced_rejection" if forced_rejection_position is not None else pair_mode
     receipt = make_receipt(
         evidence_class="LOCAL_MEASURED",
         command=recorded_module_command("pcss.llamacpp_live_benchmark", command_arguments, repository_root),
@@ -334,9 +346,10 @@ def run_live_benchmark(
         },
         status=analysis["decision"],
         payload={
-            "kind": f"controlled_{pair_mode}_pending_live_decode",
+            "kind": f"controlled_{experiment_kind}_pending_live_decode",
             "host_identity": host.as_dict(), "cases": cases, "analysis": analysis,
-            "runtime_claim": f"controlled {pair_mode} decode-only A/B; provider lookup, prefill, and restore excluded; not general PCSS speedup",
+            "forced_rejection_position": forced_rejection_position,
+            "runtime_claim": f"controlled {experiment_kind} decode-only A/B; provider lookup, prefill, and restore excluded; not general PCSS speedup",
             "not_claimed": ["representative workload speedup", "end-to-end provider speedup", "profitable production K", "thermal sustainability"],
         },
     )
@@ -360,6 +373,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--measurement-repetitions", type=int, default=8)
     parser.add_argument("--pair-mode", choices=("exact_repeat", "source_reuse"), default="exact_repeat")
     parser.add_argument("--reanchor-min-tokens", type=int, default=0)
+    parser.add_argument("--forced-rejection-position", type=int)
     return parser
 
 
@@ -374,6 +388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         measurement_repetitions=parsed.measurement_repetitions,
         pair_mode=parsed.pair_mode,
         reanchor_min_tokens=parsed.reanchor_min_tokens,
+        forced_rejection_position=parsed.forced_rejection_position,
     )
     return 0
 
