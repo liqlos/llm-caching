@@ -1955,10 +1955,6 @@ HandledResponse trajectory_pending(const Json::Object & request) {
                     verifier, runtime.vocabulary_size(), static_cast<std::int32_t>(index)
                 );
                 verification_tokens.push_back(token);
-                const llama_token expected = index < k ? target_tokens[index] : bonus_token;
-                if (token != expected) {
-                    verification_targets_match = false;
-                }
             }
             while (accepted < k && draft_tokens[accepted] == verification_tokens[accepted]) {
                 ++accepted;
@@ -1969,6 +1965,16 @@ HandledResponse trajectory_pending(const Json::Object & request) {
             } else {
                 next_pending = verification_tokens[k];
             }
+            // Tokens after the first rejected draft token are conditioned on
+            // that rejected token, so they are not comparable to the serial
+            // oracle.  The accepted prefix plus correction (or all drafts and
+            // bonus on full acceptance) is the authoritative verification span.
+            const std::size_t authoritative_target_count = accepted < k ? accepted + 1U : k + 1U;
+            verification_targets_match = std::equal(
+                verification_tokens.begin(),
+                verification_tokens.begin() + static_cast<std::ptrdiff_t>(authoritative_target_count),
+                target_tokens.begin()
+            );
             decode_tokens(reference, std::vector<llama_token>{pending_token}, committed_size, true);
             for (std::size_t index = 0; index < accepted; ++index) {
                 decode_tokens(
