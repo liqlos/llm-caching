@@ -46,6 +46,13 @@ def test_offline_fixture_emits_simulator_receipt_without_runtime_claim(tmp_path:
         "historical_value_density",
         "fixed_one_epoch_recency_window_control",
     }
+    assert {point["name"] for point in receipt.payload["scope_strategy_summary"]} == {
+        "global",
+        "repository_isolation",
+        "block_isolation",
+        "bounded_hierarchical_widening",
+    }
+    assert all(point["byte_budget"] == 4096 and point["probe_budget"] == 2 for point in receipt.payload["scope_strategy_summary"])
     assert receipt.git_revision == subprocess.run(
         ("git", "rev-parse", "HEAD"), cwd=ROOT, check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -84,6 +91,7 @@ def test_offline_cli_writes_raw_then_report(tmp_path: Path, monkeypatch: pytest.
     assert payload["evidence_class"] == "SIMULATOR"
     assert payload["payload"]["active_metrics"]["status"] == "NOT_RUN"
     assert "pcss.offline_runner" in report.read_text(encoding="utf-8")
+    assert "Logical active-view capture" in report.read_text(encoding="utf-8")
 
 
 def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_path: Path) -> None:

@@ -34,6 +34,44 @@ def test_report_is_not_created_without_a_real_raw_result(tmp_path: Path) -> None
         write_compact_report(tmp_path / "report.md", raw_result=tmp_path / "missing.json", title="No result")
 
 
+def test_offline_replay_report_includes_measured_summary(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.json"
+    report = tmp_path / "report.md"
+    replay = make_receipt(
+        evidence_class="SIMULATOR",
+        command="python -m pcss.offline_runner",
+        git_revision="a" * 40,
+        input_fingerprints={"fixture": "b" * 64},
+        status="VERIFIED_OFFLINE",
+        payload={
+            "kind": "model_free_chronological_replay",
+            "trace_records": 2,
+            "proposal_positions": 4,
+            "future_tokens_used_for_retrieval": False,
+            "capacity_simulator": {
+                "strategy_summary": {
+                    "historical_value_density": [{"capacity_bytes": 64, "active_capture_ratio": 0.5}]
+                }
+            },
+            "scope_strategy_summary": [
+                {
+                    "name": "global",
+                    "selected_prefix_value": 3,
+                    "candidate_oracle_prefix_value": 4,
+                    "zero_accept_positions": 1,
+                }
+            ],
+        },
+    )
+    write_raw_result(raw, replay)
+    write_compact_report(report, raw_result=raw, title="Offline replay")
+
+    content = report.read_text(encoding="utf-8")
+    assert "Logical active-view capture" in content
+    assert "50.00%" in content
+    assert "candidate oracle `4`" in content
+
+
 def test_raw_receipts_are_not_overwritten(tmp_path: Path) -> None:
     raw = tmp_path / "raw.json"
     write_raw_result(raw, receipt())

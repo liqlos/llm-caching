@@ -25,7 +25,7 @@ from .capacity import (
     CapacitySimulator,
 )
 from .canonical import ContractError
-from .experiments import compare_scope_policies
+from .experiments import ScopeExperimentResult, compare_scope_policies
 from .importer import import_jsonl
 from .metrics import (
     accepted_prefix_value,
@@ -266,6 +266,31 @@ def _capacity_strategy_summary(simulations: Mapping[str, Mapping[str, Any]]) -> 
     return summary
 
 
+def _scope_strategy_summary(experiments: Sequence[ScopeExperimentResult]) -> list[dict[str, Any]]:
+    """Expose comparable, post-hoc scope outcomes without hiding the ranker gap."""
+
+    global_result = next(result for result in experiments if result.policy.name == "global")
+    summary: list[dict[str, Any]] = []
+    for result in experiments:
+        summary.append(
+            {
+                "name": result.policy.name,
+                "byte_budget": result.policy.byte_budget,
+                "probe_budget": result.policy.probe_budget,
+                "selected_prefix_value": result.selected_prefix_value,
+                "candidate_oracle_prefix_value": result.candidate_oracle_prefix_value,
+                "ranking_gap": result.candidate_oracle_prefix_value - result.selected_prefix_value,
+                "selected_prefix_delta_vs_global": result.selected_prefix_value - global_result.selected_prefix_value,
+                "selected_positive_positions": result.selected_positive_positions,
+                "zero_accept_positions": result.zero_accept_positions,
+                "selected_source_tiers": {
+                    tier.value: count for tier, count in result.selected_source_tiers
+                },
+            }
+        )
+    return summary
+
+
 def _payload(result: ReplayResult) -> dict[str, Any]:
     archive_validation = _archive_validation(result)
     opportunities = result.opportunities
@@ -273,6 +298,7 @@ def _payload(result: ReplayResult) -> dict[str, Any]:
     # No provider/verifier outcome is supplied.  These zero-recovery values
     # retain the denominators while explicitly avoiding a fictional live run.
     empty_outcomes = ()
+    scope_experiments = compare_scope_policies(result, byte_budget=4096, probe_budget=2)
     return {
         "kind": "model_free_chronological_replay",
         "runtime_claim": "none",
@@ -302,9 +328,8 @@ def _payload(result: ReplayResult) -> dict[str, Any]:
             ),
             "acr_with_no_outcomes": _json_value(active_capture_ratio(opportunities, empty_outcomes)),
         },
-        "scope_experiments": _json_value(
-            compare_scope_policies(result, byte_budget=4096, probe_budget=2)
-        ),
+        "scope_experiments": _json_value(scope_experiments),
+        "scope_strategy_summary": _scope_strategy_summary(scope_experiments),
         "archive_validation": archive_validation,
         "capacity_simulator": _capacity_simulation(
             result, archive_validation["byte_accounting"]["total"]

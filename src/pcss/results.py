@@ -7,7 +7,7 @@ import json
 import shlex
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -143,6 +143,42 @@ def write_raw_result(path: Path, receipt: ResultReceipt) -> str:
     return file_sha256(path)
 
 
+def _offline_replay_summary_lines(payload: Mapping[str, Any]) -> list[str]:
+    """Render only measured model-free replay quantities already in a receipt."""
+
+    if payload.get("kind") != "model_free_chronological_replay":
+        return []
+    lines = [
+        "- Replay result:",
+        f"  - Trace records: `{payload.get('trace_records')}`; proposal positions: `{payload.get('proposal_positions')}`; future-token retrieval: `{payload.get('future_tokens_used_for_retrieval')}`",
+    ]
+    capacity = payload.get("capacity_simulator")
+    if isinstance(capacity, Mapping) and isinstance(capacity.get("strategy_summary"), Mapping):
+        lines.append("  - Logical active-view capture (oracle-valued unique persistent tokens):")
+        for policy, points in sorted(capacity["strategy_summary"].items()):
+            if not isinstance(points, list):
+                continue
+            compact_points = []
+            for point in points:
+                if not isinstance(point, Mapping):
+                    continue
+                compact_points.append(
+                    f"{point.get('capacity_bytes')} B: {point.get('active_capture_ratio', 0.0):.2%}"
+                )
+            if compact_points:
+                lines.append(f"    - `{policy}`: {', '.join(compact_points)}")
+    scope = payload.get("scope_strategy_summary")
+    if isinstance(scope, list):
+        lines.append("  - Scope selection (pre-target rank; post-hoc oracle evaluation):")
+        for point in scope:
+            if not isinstance(point, Mapping):
+                continue
+            lines.append(
+                f"    - `{point.get('name')}`: selected `{point.get('selected_prefix_value')}` / candidate oracle `{point.get('candidate_oracle_prefix_value')}`; zero-accept selections `{point.get('zero_accept_positions')}`"
+            )
+    return lines
+
+
 def write_compact_report(path: Path, *, raw_result: Path, title: str) -> None:
     """Create a compact report only from an already-written raw result."""
     require_string(title, "report.title")
@@ -164,4 +200,7 @@ def write_compact_report(path: Path, *, raw_result: Path, title: str) -> None:
         "- Input fingerprints:",
     ]
     lines.extend(f"  - `{label}`: `sha256:{fingerprint}`" for label, fingerprint in sorted(receipt["input_fingerprints"].items()))
+    payload = receipt["payload"]
+    if isinstance(payload, Mapping):
+        lines.extend(_offline_replay_summary_lines(payload))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
