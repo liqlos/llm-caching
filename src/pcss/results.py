@@ -176,6 +176,18 @@ def _offline_replay_summary_lines(payload: Mapping[str, Any]) -> list[str]:
             lines.append(
                 f"    - `{point.get('name')}`: selected `{point.get('selected_prefix_value')}` / candidate oracle `{point.get('candidate_oracle_prefix_value')}`; zero-accept selections `{point.get('zero_accept_positions')}`"
             )
+    consensus = payload.get("consensus_and_negative_evidence")
+    if isinstance(consensus, Mapping):
+        calibration = consensus.get("consensus")
+        negative = consensus.get("negative_evidence")
+        if isinstance(calibration, Mapping):
+            lines.append(
+                f"  - Consensus: `{calibration.get('independent_support_at_least_two')}` / `{calibration.get('persistent_candidate_opportunities')}` opportunities had at least two independent provenance families."
+            )
+        if isinstance(negative, Mapping):
+            lines.append(
+                f"  - Negative-evidence simulation: `{negative.get('suppressed_before_events')}` suppressions before observation across `{negative.get('events')}` events; no runtime suppression was performed."
+            )
     return lines
 
 

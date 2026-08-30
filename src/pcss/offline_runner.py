@@ -25,7 +25,15 @@ from .capacity import (
     CapacitySimulator,
 )
 from .canonical import ContractError
-from .experiments import ScopeExperimentResult, compare_scope_policies
+from .experiments import (
+    ConsensusObservation,
+    NegativeEvidenceEvent,
+    ScopeExperimentResult,
+    calibrate_consensus,
+    compare_scope_policies,
+    consensus_by_provenance,
+    simulate_decayed_negative_evidence,
+)
 from .importer import import_jsonl
 from .metrics import (
     accepted_prefix_value,
@@ -38,7 +46,7 @@ from .metrics import (
     source_attribution,
     viable_opportunity_recovery_rate,
 )
-from .replay import Candidate, ReplayResult, SourceTier, replay_chronologically
+from .replay import Candidate, ReplayResult, SourceTier, continuation_prefix_length, replay_chronologically
 from .results import (
     ResultReceipt,
     file_sha256,
@@ -157,17 +165,7 @@ def _capacity_simulation(result: ReplayResult, common_archive_bytes: int) -> dic
         epoch = record_epochs[item.record_id]
         ordinal = ordinal_by_epoch.get(epoch, 0)
         ordinal_by_epoch[epoch] = ordinal + 1
-        persistent = tuple(
-            candidate
-            for candidate in item.candidates
-            if candidate.source_record_id in record_epochs and candidate.tier.value
-            in {
-                "same_session",
-                "same_repository",
-                "personal_persistent_history",
-                "imported_corpus",
-            }
-        )
+        persistent = _persistent_candidates(item.candidates, known_record_ids=record_epochs)
         # Membership observations must be selected with pre-target information.
         # ``accepted_prefix_length`` is retained strictly as later reward, never
         # as an admission/ranking feature.
@@ -236,6 +234,25 @@ def _persistent_candidate_rank(candidate: Candidate) -> tuple[int, int, int, str
     )
 
 
+def _persistent_candidates(
+    candidates: Sequence[Candidate], *, known_record_ids: Mapping[str, int] | None = None
+) -> tuple[Candidate, ...]:
+    """Keep only legal persistent tiers, optionally bound to this immutable archive."""
+
+    persistent_tiers = {
+        SourceTier.SAME_SESSION,
+        SourceTier.SAME_REPOSITORY,
+        SourceTier.PERSONAL_PERSISTENT_HISTORY,
+        SourceTier.IMPORTED_CORPUS,
+    }
+    return tuple(
+        candidate
+        for candidate in candidates
+        if candidate.tier in persistent_tiers
+        and (known_record_ids is None or candidate.source_record_id in known_record_ids)
+    )
+
+
 def _capacity_strategy_summary(simulations: Mapping[str, Mapping[str, Any]]) -> dict[str, list[dict[str, int | float]]]:
     """Compact value accounting for logical policies, without a runtime claim."""
 
@@ -291,6 +308,61 @@ def _scope_strategy_summary(experiments: Sequence[ScopeExperimentResult]) -> lis
     return summary
 
 
+def _consensus_and_negative_evidence(result: ReplayResult) -> dict[str, Any]:
+    """Score offline-only consensus and a recovering anti-cache over one stream."""
+
+    records = {record.record_id: record for record in result.records}
+    observations: list[ConsensusObservation] = []
+    events: list[NegativeEvidenceEvent] = []
+    independent_support_at_least_two = 0
+    for ordinal, opportunity in enumerate(result.opportunities):
+        persistent = _persistent_candidates(opportunity.candidates)
+        if not persistent:
+            continue
+        consensus = consensus_by_provenance(persistent)
+        target_tokens = records[opportunity.record_id].committed_tokens[opportunity.position :]
+        accepted = continuation_prefix_length(target_tokens, consensus.consensus_prefix)
+        observations.append(
+            ConsensusObservation(
+                score=consensus.support_shrunk_score,
+                independent_support=consensus.independent_support,
+                accepted_prefix_length=accepted,
+            )
+        )
+        independent_support_at_least_two += consensus.independent_support >= 2
+        selected = min(persistent, key=_persistent_candidate_rank)
+        events.append(
+            NegativeEvidenceEvent(
+                key=f"{selected.source_record_id}:{selected.source_cursor}",
+                chronological_index=ordinal,
+                accepted_prefix_length=selected.accepted_prefix_length,
+            )
+        )
+    points = simulate_decayed_negative_evidence(events)
+    return {
+        "kind": "offline_consensus_and_negative_evidence_no_runtime_control",
+        "consensus": {
+            "persistent_candidate_opportunities": len(observations),
+            "independent_support_at_least_two": independent_support_at_least_two,
+            "accepted_prefix_value": sum(item.accepted_prefix_length for item in observations),
+            "calibration": _json_value(calibrate_consensus(observations, bins=5)),
+            "boundary": "consensus is scored from prior continuations and target tokens only after the chronological position closes",
+        },
+        "negative_evidence": {
+            "events": len(events),
+            "zero_accept_events": sum(event.accepted_prefix_length == 0 for event in events),
+            "suppressed_before_events": sum(point.suppressed_before for point in points),
+            "configuration": {
+                "half_life_events": 10.0,
+                "suppress_at": 2.0,
+                "max_entries": 128,
+                "success_recovery_multiplier": 0.5,
+            },
+            "boundary": "offline recovering anti-cache simulation; no proposal was suppressed during target decoding",
+        },
+    }
+
+
 def _payload(result: ReplayResult) -> dict[str, Any]:
     archive_validation = _archive_validation(result)
     opportunities = result.opportunities
@@ -330,6 +402,7 @@ def _payload(result: ReplayResult) -> dict[str, Any]:
         },
         "scope_experiments": _json_value(scope_experiments),
         "scope_strategy_summary": _scope_strategy_summary(scope_experiments),
+        "consensus_and_negative_evidence": _consensus_and_negative_evidence(result),
         "archive_validation": archive_validation,
         "capacity_simulator": _capacity_simulation(
             result, archive_validation["byte_accounting"]["total"]
