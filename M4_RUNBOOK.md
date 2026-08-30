@@ -64,8 +64,26 @@ production decode integration or a general PCSS speedup claim.
   current bridge must serially reconstruct all committed tokens after batch
   verification.
 - The serial-canonical no-go does not apply to the later pending-token protocol.
-  That path was byte-exact for K=2. K>=3 still fails the raw serialized-state
-  gate and remains prohibited for live claims under this llama.cpp build.
+  Native tail trimming was byte-exact for K=2, but the raw K>=3 state path was
+  not. Revision `aa78ec1528af6560a722e101196df335137e32b0` therefore restores
+  the checkpoint and serially replays the committed anchor/prefix after every
+  wide batch; this reconstruction is included in the candidate timer.
+- The isolated upstream llama.cpp `0b5be7e4a25862bc2777d0c47eae18788a8c963a`
+  run at
+  `/Users/ai-server/Projects/pcss-artifacts/runs/pending-upstream-wide-fallback-descriptorfix-0b5be7e4-aa78ec1`
+  is `LOCAL_MEASURED VERIFIED` for all five suites: K={2,3,4} sweep
+  (`5ae39d5ef79291d0efc46669961693d116f69f1baa5d0ac2cad0f4e8a0c23fa9`),
+  perfect draft, provider floor, K=3 rejection at every position, and
+  long-mixed trajectory. The bridge and library are isolated under the PCSS
+  artifact root; neither the existing sidecar nor global Homebrew was changed.
+- Its separate K=3 controlled exact-repeat decode receipt is
+  `CONTROLLED_LIVE_DECODE_INCONCLUSIVE`, not a speedup: all three output/state
+  comparisons are exact, but serial/candidate decode ratio is `0.439614`, 95%
+  clustered CI `[0.435783, 0.441683]` (`raw/20-controlled-live-k3.json`,
+  SHA-256 `39105d3df84b72fe7cd50dbda4d79b4c4fa3ab11a869c6e6b5a0af84e64da5c9`).
+  Each 48-token case performed 12 timed serial-state reconstructions. This
+  fallback is therefore correctness evidence and a performance kill gate, not
+  a viable K=3 PCSS runtime path.
 - The controlled exact-repeat live run at
   `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
   revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
@@ -155,8 +173,8 @@ PYTHONPATH="$PCSS_REPO/src" "$PCSS_PYTHON" -m pcss.protocol_bakeoff \
   --repository-root "$PCSS_REPO"
 ~~~
 
-Kill gates remain fail-closed: any output/state mismatch, K>2 under the current
-pending protocol, a confidence interval crossing the declared benefit margin,
+Kill gates remain fail-closed: any output/state mismatch, a confidence interval
+crossing the declared benefit margin,
 or changed model/runtime/trace fingerprints blocks a runtime claim. Do not
 infer end-to-end gain until provider lookup is inside the timed live path and a
 representative workload clears its clustered confidence gate.
