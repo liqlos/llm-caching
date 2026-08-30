@@ -92,6 +92,15 @@ production decode integration or a general PCSS speedup claim.
   It supersedes neither the old K=2 receipt nor its narrow claim, but proves
   that the earlier positive decode-only result does not reproduce across the
   isolated llama.cpp build; neither receipt supports a portable K=2 claim.
+- Current-source edit/re-anchor is a distinct but also negative controlled
+  path on that exact backend. `raw/22-source-reanchor-live-k2.json` is
+  output/state exact, but reports serial/candidate `0.903863`, clustered 95%
+  CI `[0.806391, 0.995205]`, and status
+  `CONTROLLED_LIVE_DECODE_INCONCLUSIVE` (SHA-256
+  `944b2f2399d716a407170e8fb314a9f2e57b347d2e5f41b98e3943f562a2bdc5`).
+  Across eight repetitions per three edit cases it attempted 108 re-anchors
+  and succeeded twice. The result does not justify tuning the re-anchor
+  threshold or claiming benefit from source reuse.
 - The controlled exact-repeat live run at
   `/Users/ai-server/Projects/pcss-artifacts/runs/pending-live-7a1a721` used
   revision `7a1a721fff9a1debd5c33c393a759ac6aac85b2a`. Its
