@@ -180,6 +180,16 @@ production decode integration or a general PCSS speedup claim.
   SHA-256 `5aa453149edada07f46da6baca25a659fd7b782c8ab2ffca29e97ec3a0fa0b98`).
   This is the exact-prompt abstention microprofile only, not a serial-fallback
   latency, cold-I/O measurement, or production provider guarantee.
+- The measured hit harness, edited serial controls, and miss profile were then
+  combined only after binding their common target manifest/config/bridge/model
+  and archive seal. The deliberately synthetic 50/50 fixture mix has 12 exact
+  hit and 12 edited-miss request clusters; each miss is charged one lookup at
+  the miss profile's 95% upper bound (`31.081` microseconds). The resulting
+  `SIMULATOR MIXED_EXACT_PROMPT_POLICY_POSITIVE` ratio is `1.047538`, clustered
+  95% CI `[1.025380, 1.070461]` (`raw/50-mixed-policy-economics.json`, SHA-256
+  `2b76affd2afc7853ea11dc082689972de575fd450e1b7f01901923c75a166ec9`).
+  This is an exact-fixture policy bound, not a representative traffic mix,
+  integrated provider, end-to-end request, or thermal result.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
