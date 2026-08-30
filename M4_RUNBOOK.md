@@ -145,6 +145,18 @@ production decode integration or a general PCSS speedup claim.
   then compares the complete visible prompt before returning a bounded cursor.
   It is a warm immutable lookup/cursor microprofile, not provider lifecycle,
   target decode, cold-I/O, storage-layout, or end-to-end speedup evidence.
+- A fail-closed composition then bound lookup cost against the target receipt
+  without attaching a provider to decoding. It rejects mismatched manifest,
+  trace, or archive seal fingerprints and adds the lookup profile's 95% upper
+  bound (`44.052` microseconds) once for **every** verification round, which is
+  deliberately more costly than retaining a cursor after the first hit. The
+  derived receipt is `SIMULATOR COMPOSED_EXACT_PROMPT_DECODE_POSITIVE`: adjusted
+  paired serial-over-candidate ratio `1.077114`, clustered 95% CI
+  `[1.047446, 1.106060]` (`raw/20-lookup-inclusive-economics.json`, SHA-256
+  `2735572f776b7d4e4d40f5f51529685232403e8ced39b57d906278d87d67f35f`).
+  This establishes a conservative lookup-inclusive **decode-only bound** for
+  exact-prompt archive hits; it does not establish integrated provider,
+  end-to-end request, representative workload, cold-I/O, or thermal speedup.
 - A separate K=1 exact-repeat profile on the same immutable backend was also
   exact output/state, with zero checkpoints/reconstructions and paired
   serial-over-candidate ratio `1.112690`, clustered 95% CI
