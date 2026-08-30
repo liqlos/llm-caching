@@ -1829,7 +1829,7 @@ HandledResponse verify_pending(const Json::Object & request) {
     return {Json(std::move(result)), successful};
 }
 
-HandledResponse trajectory_pending(const Json::Object & request) {
+HandledResponse trajectory_pending(const Json::Object & request, ModelRuntime * persistent_runtime = nullptr) {
     require_exact_keys(
         request,
         {
@@ -1862,7 +1862,16 @@ HandledResponse trajectory_pending(const Json::Object & request) {
         throw BridgeError("invalid_request", "pending trajectory worst-case length exceeds configured n_ctx");
     }
 
-    ModelRuntime runtime(config);
+    std::optional<ModelRuntime> owned_runtime;
+    if (persistent_runtime == nullptr) {
+        owned_runtime.emplace(config);
+        persistent_runtime = &*owned_runtime;
+    } else if (persistent_runtime->config().model_artifact != config.model_artifact ||
+               persistent_runtime->config().runtime.n_ctx != config.runtime.n_ctx ||
+               persistent_runtime->config().runtime.n_batch != config.runtime.n_batch) {
+        throw BridgeError("invalid_request", "persistent trajectory session configuration differs from its first request");
+    }
+    ModelRuntime & runtime = *persistent_runtime;
     runtime.validate_tokens(seed.initial_context_tokens, "seed.initial_context_tokens");
     const std::vector<llama_token> prefix_tokens(
         seed.initial_context_tokens.begin(),
@@ -2885,6 +2894,9 @@ const char * operation_from_argv(int argc, char ** argv) {
     if (argument == "--pcss-trajectory-pending") {
         return "trajectory_pending";
     }
+    if (argument == "--pcss-trajectory-pending-session") {
+        return "trajectory_pending_session";
+    }
     if (argument == "--pcss-profile") {
         return "profile";
     }
@@ -2921,6 +2933,7 @@ int main(int argc, char ** argv) {
 
     llama_backend_init();
     bool failed = false;
+    std::optional<ModelRuntime> persistent_trajectory_runtime;
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) {
@@ -2936,7 +2949,19 @@ int main(int argc, char ** argv) {
         }
         try {
             const Json request = JsonParser(line).parse_document();
-            const HandledResponse response = handle_request(request, expected_operation);
+            HandledResponse response = [&]() {
+                if (std::string(expected_operation) != "trajectory_pending_session") {
+                    return handle_request(request, expected_operation);
+                }
+                const Json::Object & object = as_object(request, "request");
+                if (required_string(object, "operation") != "trajectory_pending") {
+                    throw BridgeError("invalid_request", "trajectory session accepts trajectory_pending requests only");
+                }
+                if (!persistent_trajectory_runtime.has_value()) {
+                    persistent_trajectory_runtime.emplace(parse_config(object));
+                }
+                return trajectory_pending(object, &*persistent_trajectory_runtime);
+            }();
             std::cout << json_dump(response.payload) << '\n';
             if (!response.successful) {
                 failed = true;
