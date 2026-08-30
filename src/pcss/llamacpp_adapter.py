@@ -399,7 +399,8 @@ def _run_bridge(config: _BridgeConfig, arguments: tuple[str, ...], request: dict
     if completed.returncode != 0:
         response = _strict_json_object(completed.stdout, "pcss_llama_bridge response")
         if (
-            request["operation"] == "verify"
+            completed.returncode == 1
+            and request["operation"] == "verify"
             and response.get("schema_version") == VERIFY_SCHEMA_VERSION
             and response.get("operation") == "verify"
             and response.get("status") == "mismatch"

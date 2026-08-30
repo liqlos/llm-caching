@@ -477,6 +477,22 @@ def test_verify_maps_structured_native_mismatch_when_bridge_exits_nonzero(
     assert outcome.continuation_matches
 
 
+def test_verify_rejects_structured_mismatch_with_an_unexpected_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, bridge, model, library = _ready_adapter(tmp_path, monkeypatch)
+    _write_bridge(
+        bridge,
+        capabilities=_capabilities(library, model),
+        verify_response=_verify_response(library, model, status="mismatch", state_matches=False),
+        verify_exit_status=2,
+    )
+
+    assert adapter.availability().execution_class == "TARGET_BACKEND"
+    with pytest.raises(ContractError, match="non-zero exit status"):
+        adapter.verify(_case())
+
+
 def test_verify_rejects_native_target_prefix_that_disagrees_with_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

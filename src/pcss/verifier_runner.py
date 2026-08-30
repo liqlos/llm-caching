@@ -387,15 +387,15 @@ def _not_run_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> Harne
     )
 
 
-def _failed_execution_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
+def _incomplete_execution_receipt(suite: str, adapter: VerifierAdapter, reason: str) -> HarnessReceipt:
     return HarnessReceipt(
         suite=suite,
         adapter=require_string(adapter.name, "adapter.name"),
-        status="FAILED",
-        execution_class="TARGET_BACKEND",
+        status="NOT_RUN",
+        execution_class="NOT_RUN",
         reason=reason,
         cases=(),
-        metadata={"target_execution": {"status": "failed", "reason": reason}},
+        metadata={"target_execution": {"status": "incomplete", "reason": reason}},
     )
 
 
@@ -442,7 +442,9 @@ def execute_suite(
                     VerifierHarness(frozen_adapter, target_execution_permit=permit), suite, cases
                 )
             except Exception as error:
-                harness_receipt = _failed_execution_receipt(suite, adapter, f"target verification execution failed: {error}")
+                harness_receipt = _incomplete_execution_receipt(
+                    suite, adapter, f"target verification did not return a valid result: {error}"
+                )
     else:
         harness_receipt = _run_suite(VerifierHarness(frozen_adapter), suite, cases)
 

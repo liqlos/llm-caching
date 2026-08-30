@@ -9,6 +9,7 @@ from pcss import verifier_runner
 from pcss.canonical import ContractError
 from pcss.verifier import (
     AdapterAvailability,
+    AdapterOutcome,
     ScriptedFixtureAdapter,
     TargetExecutionPermit,
     TargetHostIdentity,
@@ -253,16 +254,29 @@ class AuthorizedFailingAdapter:
         raise ContractError("native bridge execution failure")
 
 
-def test_runner_records_a_target_execution_failure_after_authorization(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+class AuthorizedMismatchAdapter:
+    name = "authorized-mismatch-target"
+
+    def availability(self) -> AdapterAvailability:
+        return AdapterAvailability("TARGET_BACKEND", "native mismatch receipt")
+
+    def verify(self, case: VerifierCase) -> AdapterOutcome:
+        return AdapterOutcome(
+            accepted_draft_tokens=1,
+            correction_token=2,
+            bonus_token=None,
+            committed_tokens=case.expected_committed_tokens,
+            mutable_state_digest=case.expected_state_digest,
+            reconstruction_matches=False,
+        )
+
+
+def _allow_target_execution(
+    monkeypatch: pytest.MonkeyPatch, adapter_name: str
 ) -> None:
-    fixture = tmp_path / "cases.json"
-    manifest = tmp_path / "manifest.json"
-    fixture.write_text(json.dumps(fixture_payload()))
-    manifest.write_text(json.dumps(unfilled_manifest()))
     host, binding, _ = _target_authorization_inputs()
     permit = TargetExecutionPermit(
-        adapter_name=AuthorizedFailingAdapter.name,
+        adapter_name=adapter_name,
         host_fingerprint=host.fingerprint,
         adapter_binding_fingerprint="f" * 64,
     )
@@ -273,6 +287,16 @@ def test_runner_records_a_target_execution_failure_after_authorization(
     monkeypatch.setattr(verifier_runner, "resolve_git_revision", lambda root: "f" * 40)
     monkeypatch.setattr(verifier_runner, "recorded_module_command", lambda module, arguments, root: "test-command")
 
+
+def test_runner_marks_unstructured_target_execution_error_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = tmp_path / "cases.json"
+    manifest = tmp_path / "manifest.json"
+    fixture.write_text(json.dumps(fixture_payload()))
+    manifest.write_text(json.dumps(unfilled_manifest()))
+    _allow_target_execution(monkeypatch, AuthorizedFailingAdapter.name)
+
     receipt = execute_suite(
         adapter=AuthorizedFailingAdapter(),
         suite="forced-rejection",
@@ -282,10 +306,33 @@ def test_runner_records_a_target_execution_failure_after_authorization(
         command_arguments=("--suite", "forced-rejection"),
     )
 
+    assert receipt.evidence_class == "NOT_RUN"
+    assert receipt.status == "NOT_RUN"
+    assert receipt.payload["metadata"]["target_execution"]["status"] == "incomplete"
+    assert "native bridge execution failure" in receipt.payload["reason"]
+
+
+def test_runner_records_valid_target_mismatch_as_measured_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = tmp_path / "cases.json"
+    manifest = tmp_path / "manifest.json"
+    fixture.write_text(json.dumps(fixture_payload()))
+    manifest.write_text(json.dumps(unfilled_manifest()))
+    _allow_target_execution(monkeypatch, AuthorizedMismatchAdapter.name)
+
+    receipt = execute_suite(
+        adapter=AuthorizedMismatchAdapter(),
+        suite="forced-rejection",
+        fixture_path=fixture,
+        manifest_path=manifest,
+        repository_root=Path(__file__).resolve().parents[1],
+        command_arguments=("--suite", "forced-rejection"),
+    )
+
     assert receipt.evidence_class == "LOCAL_MEASURED"
     assert receipt.status == "FAILED"
-    assert receipt.payload["metadata"]["target_execution"]["status"] == "failed"
-    assert "native bridge execution failure" in receipt.payload["reason"]
+    assert receipt.payload["cases"][0]["failures"] == ["serial_batched_state_mismatch"]
 
 
 class SelfDeclaredTargetAdapter:
