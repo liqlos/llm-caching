@@ -354,12 +354,12 @@ def _consensus_and_negative_evidence(result: ReplayResult) -> dict[str, Any]:
     observations: list[ConsensusObservation] = []
     events: list[NegativeEvidenceEvent] = []
     independent_support_at_least_two = 0
-    for ordinal, opportunity in enumerate(result.opportunities):
-        persistent = _persistent_candidates(opportunity.candidates)
+    for ordinal, replay_opportunity in enumerate(result.opportunities):
+        persistent = _persistent_candidates(replay_opportunity.candidates)
         if not persistent:
             continue
         consensus = consensus_by_provenance(persistent)
-        target_tokens = records[opportunity.record_id].committed_tokens[opportunity.position :]
+        target_tokens = records[replay_opportunity.record_id].committed_tokens[replay_opportunity.position :]
         accepted = continuation_prefix_length(target_tokens, consensus.consensus_prefix)
         observations.append(
             ConsensusObservation(

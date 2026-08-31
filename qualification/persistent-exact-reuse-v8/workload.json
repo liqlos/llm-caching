@@ -1,0 +1,11 @@
+{
+  "schema_version": "pcss.live-server-workload/v1",
+  "requests": [
+    {"request_id":"clamp-first","chronological_index":10,"endpoint":"/v1/completions","body":{"prompt":"Complete this Python function. Return code only.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n"}},
+    {"request_id":"clamp-repeat","chronological_index":20,"endpoint":"/v1/completions","body":{"prompt":"Complete this Python function. Return code only.\n\ndef clamp(value, low, high):\n    if low > high:\n        raise ValueError(\"low must not exceed high\")\n"}},
+    {"request_id":"json-first","chronological_index":30,"endpoint":"/v1/completions","body":{"prompt":"Complete this Python function. Return code only.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n"}},
+    {"request_id":"json-repeat","chronological_index":40,"endpoint":"/v1/completions","body":{"prompt":"Complete this Python function. Return code only.\n\ndef result_payload(count):\n    return {\n        \"status\": \"ok\",\n"}},
+    {"request_id":"typescript-first","chronological_index":50,"endpoint":"/v1/completions","body":{"prompt":"Complete this TypeScript function. Return code only.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n"}},
+    {"request_id":"typescript-repeat","chronological_index":60,"endpoint":"/v1/completions","body":{"prompt":"Complete this TypeScript function. Return code only.\n\nexport function normalizeName(value: string): string {\n  const trimmed = value.trim();\n"}}
+  ]
+}

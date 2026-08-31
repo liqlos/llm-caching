@@ -1,0 +1,167 @@
+{
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "study_id": "synthetic-control-v4-c74a276a",
+  "frozen": true,
+  "git_revision": "027067bb3f3099c7c45f41261bcfd444c0f3ac4f",
+  "patch_sha256": "c74a276a88ba51ed7d619d66f7e14b17bc621338244af323462713e9ab184a72",
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "runtime_fingerprint": "f7bbe6a442971ae373851fa999d1b5ebeb35042b59075ce0c8bbd67b9ede79a0",
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "workload_sha256": "3ecab1c524250adb3e0b913e7eedc987ab9dbab37f1c2fc21b7129951992a254",
+  "workload_class": "synthetic_control",
+  "workload_provenance": {
+    "source": "agent-authored exact-repeat positive control plus one synthetic miss",
+    "capture_protocol": "pcss.synthetic-visible-prompts/v1",
+    "captured_before_arm_results": true,
+    "immutable": true
+  },
+  "eligibility_rules": [
+    "dispatch every request exactly once per arm in chronological order",
+    "request body contains prompts only and no expected or future output",
+    "retain failed requests and do not exclude outliers after results"
+  ],
+  "calibration_split": {
+    "request_ids": [
+      "repeat-warm-1",
+      "repeat-hit-2",
+      "repeat-hit-3",
+      "miss-control-4"
+    ],
+    "tuning_permitted": false
+  },
+  "holdout_split": {
+    "request_ids": [],
+    "one_shot": false
+  },
+  "clustering": {
+    "method": "request-family cluster",
+    "request_cluster_ids": {
+      "repeat-warm-1": "exact-repeat-family",
+      "repeat-hit-2": "exact-repeat-family",
+      "repeat-hit-3": "exact-repeat-family",
+      "miss-control-4": "miss-family"
+    }
+  },
+  "holdout": false,
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "request_defaults": {
+    "max_tokens": 64,
+    "temperature": 0,
+    "seed": 123,
+    "stream": true
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "namespace": "synthetic-control-v1",
+        "max_disk_gib": 1,
+        "ram_mib": 16,
+        "read_only": false,
+        "disable_learning": false
+      }
+    }
+  ],
+  "arm_order": [
+    "baseline",
+    "upstream-ngram-cache",
+    "pcss-cache"
+  ],
+  "counterbalance": {
+    "method": "latin_square",
+    "sequence_id": "row-1"
+  },
+  "state_definitions": {
+    "warm": "same live process after earlier chronological requests in its isolated arm",
+    "cold": "fresh process and empty arm-owned store before the first request"
+  },
+  "arm_store_initialization": {
+    "baseline": {
+      "state": "cold",
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null
+    },
+    "upstream-ngram-cache": {
+      "state": "cold",
+      "initialization": "fresh process with empty in-memory ngram cache",
+      "snapshot_sha256": null
+    },
+    "pcss-cache": {
+      "state": "cold",
+      "initialization": "fresh process with a new isolated empty PCSS store",
+      "snapshot_sha256": null
+    }
+  },
+  "readiness": {
+    "path": "/health",
+    "timeout_seconds": 30,
+    "max_attempts": 120,
+    "interval_seconds": 0.25
+  },
+  "request_timeout_seconds": 30,
+  "request_count": 4,
+  "effect_gates": {
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster",
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_required": true
+  },
+  "resource_ceilings": {
+    "ram_mib": 8192,
+    "disk_gib": 1,
+    "startup_seconds": 30,
+    "compaction_write_amplification_max": 2
+  },
+  "allowed_policy_families": [
+    "ordinary-target-decoding",
+    "upstream-ngram-cache",
+    "conservative-exact-pcss-current-context-plus-persistent"
+  ],
+  "finite_parameter_grids": {
+    "draft_tokens": [8],
+    "prefix_tokens": [64],
+    "lookup_probes": [256],
+    "lookup_bytes": [262144]
+  },
+  "budgets": {
+    "max_requests": 12,
+    "max_wall_clock_seconds": 600,
+    "max_artifact_bytes": 52428800
+  },
+  "stopping_rule": "stop after all three frozen arms consume the chronological stream once or any correctness/resource kill gate fires",
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "exact output mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure and timeout in raw samples"
+  ],
+  "claim_boundary": "Synthetic capability and regression evidence only. No representative workload, broad speedup, best-in-class, frontier, or default-enable claim."
+}

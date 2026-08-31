@@ -1,0 +1,37 @@
+{
+  "schema_version": "pcss.live-server-workload/v1",
+  "requests": [
+    {
+      "request_id": "repeat-warm-1",
+      "chronological_index": 10,
+      "endpoint": "/v1/completions",
+      "body": {
+        "prompt": "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma"
+      }
+    },
+    {
+      "request_id": "repeat-hit-2",
+      "chronological_index": 20,
+      "endpoint": "/v1/completions",
+      "body": {
+        "prompt": "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma"
+      }
+    },
+    {
+      "request_id": "repeat-hit-3",
+      "chronological_index": 30,
+      "endpoint": "/v1/completions",
+      "body": {
+        "prompt": "alpha beta gamma alpha beta gamma alpha beta gamma alpha beta gamma"
+      }
+    },
+    {
+      "request_id": "miss-control-4",
+      "chronological_index": 40,
+      "endpoint": "/v1/completions",
+      "body": {
+        "prompt": "Unique miss control: describe a cedar compass beside violet snow without repeating phrases."
+      }
+    }
+  ]
+}

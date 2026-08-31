@@ -1,0 +1,271 @@
+{
+  "allowed_policy_families": [
+    "pcss.current-source-exact-anchor/v1",
+    "upstream-ngram-cache-k2-reporting-only"
+  ],
+  "arm_order": [
+    "baseline",
+    "pcss-cache",
+    "upstream-ngram-cache"
+  ],
+  "arm_store_initialization": {
+    "baseline": {
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "pcss-cache": {
+      "initialization": "fresh process with a private empty isolated read-only PCSS store and no learned/current-context tier",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "upstream-ngram-cache": {
+      "initialization": "fresh process with empty in-memory upstream ngram cache",
+      "snapshot_sha256": null,
+      "state": "cold"
+    }
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "disable_current_context": true,
+        "disable_learning": true,
+        "enable_current_source": true,
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "max_disk_gib": 1,
+        "max_draft_tokens": 2,
+        "namespace": "synthetic-current-source-long-v4",
+        "ram_mib": 64,
+        "read_only": true
+      }
+    }
+  ],
+  "budgets": {
+    "max_artifact_bytes": 268435456,
+    "max_requests": 84,
+    "max_wall_clock_seconds": 1800
+  },
+  "calibration_split": {
+    "request_ids": [
+      "source-1-positive-1",
+      "source-1-positive-2",
+      "source-1-positive-3",
+      "source-1-positive-4",
+      "source-1-ambiguity-control",
+      "source-1-mismatch-control",
+      "source-1-ordinary-control",
+      "source-2-positive-1",
+      "source-2-positive-2",
+      "source-2-positive-3",
+      "source-2-positive-4",
+      "source-2-ambiguity-control",
+      "source-2-mismatch-control",
+      "source-2-ordinary-control",
+      "source-3-positive-1",
+      "source-3-positive-2",
+      "source-3-positive-3",
+      "source-3-positive-4",
+      "source-3-ambiguity-control",
+      "source-3-mismatch-control",
+      "source-3-ordinary-control",
+      "source-4-positive-1",
+      "source-4-positive-2",
+      "source-4-positive-3",
+      "source-4-positive-4",
+      "source-4-ambiguity-control",
+      "source-4-mismatch-control",
+      "source-4-ordinary-control"
+    ],
+    "tuning_permitted": false
+  },
+  "claim_boundary": "Hand-authored future-token-free current-source long-continuation synthetic capability control. V4 preserves V3's positive/mismatch/no-source rows and changes only the deterministic ambiguity control after V3 safely recorded two rather than one ambiguity abstention per episode; it can establish exact local source-tier activation and measured local end-to-end latency only, not project-naturalistic, owner-representative, general, default-enable, persistent-history, or best-in-class performance.",
+  "clustering": {
+    "method": "predeclared seven-request source capability episode",
+    "request_cluster_ids": {
+      "source-1-ambiguity-control": "source-episode-1",
+      "source-1-mismatch-control": "source-episode-1",
+      "source-1-ordinary-control": "source-episode-1",
+      "source-1-positive-1": "source-episode-1",
+      "source-1-positive-2": "source-episode-1",
+      "source-1-positive-3": "source-episode-1",
+      "source-1-positive-4": "source-episode-1",
+      "source-2-ambiguity-control": "source-episode-2",
+      "source-2-mismatch-control": "source-episode-2",
+      "source-2-ordinary-control": "source-episode-2",
+      "source-2-positive-1": "source-episode-2",
+      "source-2-positive-2": "source-episode-2",
+      "source-2-positive-3": "source-episode-2",
+      "source-2-positive-4": "source-episode-2",
+      "source-3-ambiguity-control": "source-episode-3",
+      "source-3-mismatch-control": "source-episode-3",
+      "source-3-ordinary-control": "source-episode-3",
+      "source-3-positive-1": "source-episode-3",
+      "source-3-positive-2": "source-episode-3",
+      "source-3-positive-3": "source-episode-3",
+      "source-3-positive-4": "source-episode-3",
+      "source-4-ambiguity-control": "source-episode-4",
+      "source-4-mismatch-control": "source-episode-4",
+      "source-4-ordinary-control": "source-episode-4",
+      "source-4-positive-1": "source-episode-4",
+      "source-4-positive-2": "source-episode-4",
+      "source-4-positive-3": "source-episode-4",
+      "source-4-positive-4": "source-episode-4"
+    }
+  },
+  "counterbalance": {
+    "method": "single_preregistered_order",
+    "sequence_id": "baseline-pcss-upstream"
+  },
+  "effect_gates": {
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "current_source_abstentions_max": 4,
+    "current_source_accepted_tokens_min": 256,
+    "current_source_ambiguities_max": 4,
+    "current_source_hit_episodes_min": 4,
+    "current_source_hit_requests_min": 16,
+    "current_source_lookup_requests_min": 16,
+    "current_source_matching_requests_min": 20,
+    "current_source_mismatch_abstentions_min": 4,
+    "current_source_mismatch_control_requests_min": 4,
+    "current_source_peak_index_bytes_min": 1,
+    "current_source_rejections_max": 0,
+    "exact_output_arms": [
+      "pcss-cache"
+    ],
+    "exact_output_required": true,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster"
+  },
+  "eligibility_rules": [
+    "all twenty-eight frozen requests dispatch once per arm in chronological order",
+    "each episode contains four unique exact source-anchor positives, one divergent-continuation ambiguity control, one compatibility-mismatch control, and one no-source ordinary control",
+    "matching rows require a local tokenizer preflight proving one exact final 32-token anchor and two source continuation tokens before arm results",
+    "v4 preserves all v3 positive/mismatch/no-source rows byte for byte and changes only each ambiguity source vector through the preregistered source-only actual-path 64-token trigger with a first-token-divergent continuation; no model response, target completion, latency, gate threshold, RAM value, or arm order selected that vector",
+    "no request selection by answer, PCSS hit, latency, or output"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure, timeout, source abstention, mismatch control, and outlier in raw samples"
+  ],
+  "finite_parameter_grids": {
+    "ambiguity_rows_per_episode": [
+      1
+    ],
+    "ambiguity_trigger_offset_tokens": [
+      64
+    ],
+    "completion_max_tokens": [
+      128
+    ],
+    "draft_tokens": [
+      2
+    ],
+    "matching_rows_per_episode": [
+      4
+    ],
+    "mismatch_rows_per_episode": [
+      1
+    ],
+    "ordinary_rows_per_episode": [
+      1
+    ],
+    "source_anchor_tokens": [
+      32
+    ],
+    "source_continuation_consensus_tokens": [
+      2
+    ],
+    "source_ram_share_denominator": [
+      8
+    ],
+    "source_total_pcss_ram_mib": [
+      64
+    ],
+    "upstream_ngram_draft_tokens": [
+      2
+    ]
+  },
+  "frozen": true,
+  "git_revision": "027067bb3f3099c7c45f41261bcfd444c0f3ac4f",
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "holdout": false,
+  "holdout_split": {
+    "one_shot": false,
+    "request_ids": []
+  },
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "baseline-versus-PCSS exact output mismatch",
+    "policy or current-source metric binding mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "source material appearing in archived receipt or server logs",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "patch_sha256": "9c7de25f952acab80197bb1581625d3ce696eb94cc9bd2208c35ed6127f28b6b",
+  "policy_id": "pcss.current-source-exact-anchor/v1",
+  "policy_spec_sha256": "0cecb03e4190c4032346cc047ee68e2f5d9dda5981d3c2cb05ce8cc138b68321",
+  "readiness": {
+    "interval_seconds": 0.25,
+    "max_attempts": 720,
+    "path": "/health",
+    "timeout_seconds": 180
+  },
+  "request_count": 28,
+  "request_defaults": {
+    "cache_prompt": false,
+    "max_tokens": 128,
+    "seed": 7,
+    "stream": true,
+    "temperature": 0,
+    "top_k": 1
+  },
+  "request_timeout_seconds": 180,
+  "resource_ceilings": {
+    "compaction_write_amplification_max": 2,
+    "disk_gib": 1,
+    "ram_mib": 8192,
+    "startup_seconds": 180
+  },
+  "runtime_fingerprint": "530312aac7d5cdf4f3c7646ca81aeca101c6e51dd2f93a087aa0cfb917a32fe0",
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "state_definitions": {
+    "cold": "fresh process and empty arm-owned state before the first request",
+    "warm": "same isolated live process after earlier chronological requests"
+  },
+  "stopping_rule": "stop after all three frozen arms consume the twenty-eight-request chronological synthetic workload once, or immediately at any correctness, attestation, resource, privacy, or system-health kill gate",
+  "study_id": "synthetic-current-source-long-v4-9c7de25f",
+  "workload_class": "synthetic_control",
+  "workload_provenance": {
+    "capture_protocol": "local-tokenizer-anchor-and-divergence-preflight/v1; private-store-replay-v2; resource-admission-preflight-v3; actual-path-first-token-divergence-one-ambiguity-preflight-v4",
+    "captured_before_arm_results": true,
+    "immutable": true,
+    "source": "hand-authored static integer-sequence source-anchor capability control; v4 changes only the actual-path first-token-divergent ambiguity vectors after a four-episode one-ambiguity preflight"
+  },
+  "workload_sha256": "e0eba146ce36fbfc39f9c0f0a599ec4ba474eead940c8cfc4f9c0701604e6be7"
+}

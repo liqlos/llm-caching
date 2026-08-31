@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import pcss.offline_runner as offline_runner
+import pcss.results as results
 from pcss.canonical import ContractError
 from pcss.offline_runner import (
     PCSS_MASTER_RFC_SHA256,
@@ -26,12 +27,28 @@ def rfc_source(tmp_path: Path) -> Path:
     return path
 
 
-def test_offline_fixture_emits_simulator_receipt_without_runtime_claim(tmp_path: Path) -> None:
+def git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Receipt tests must not depend on the developer's checkout being clean."""
+    repository = tmp_path / "receipt-repository"
+    repository.mkdir()
+    (repository / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    for command in (
+        ("git", "init"),
+        ("git", "add", "fixture.txt"),
+        ("git", "-c", "user.name=PCSS test", "-c", "user.email=pcss@example.invalid", "commit", "-m", "fixture"),
+    ):
+        subprocess.run(command, cwd=repository, check=True, capture_output=True, text=True)
+    monkeypatch.setattr(results, "_runtime_repository_root", lambda: repository)
+    return repository
+
+
+def test_offline_fixture_emits_simulator_receipt_without_runtime_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rfc = rfc_source(tmp_path)
+    repository = git_repository(tmp_path, monkeypatch)
     receipt = execute_offline_fixture(
         fixture_path=ROOT / "fixtures/replay/chronological-oracle-v1.json",
         rfc_path=rfc,
-        repository_root=ROOT,
+        repository_root=repository,
         command_arguments=("--fixture", "fixture.json"),
         expected_rfc_sha256=file_sha256(rfc),
     )
@@ -58,7 +75,7 @@ def test_offline_fixture_emits_simulator_receipt_without_runtime_claim(tmp_path:
     assert len(evidence["consensus"]["calibration"]) == 5
     assert evidence["negative_evidence"]["events"] >= 0
     assert receipt.git_revision == subprocess.run(
-        ("git", "rev-parse", "HEAD"), cwd=ROOT, check=True, capture_output=True, text=True
+        ("git", "rev-parse", "HEAD"), cwd=repository, check=True, capture_output=True, text=True
     ).stdout.strip()
     assert "offline-test-command" not in receipt.command
 
@@ -67,6 +84,7 @@ def test_offline_cli_writes_raw_then_report(tmp_path: Path, monkeypatch: pytest.
     raw = tmp_path / "raw.json"
     report = tmp_path / "report.md"
     rfc = rfc_source(tmp_path)
+    repository = git_repository(tmp_path, monkeypatch)
     monkeypatch.setattr(
         offline_runner,
         "_validate_rfc_source",
@@ -85,7 +103,7 @@ def test_offline_cli_writes_raw_then_report(tmp_path: Path, monkeypatch: pytest.
                 "--report",
                 str(report),
                 "--repository-root",
-                str(ROOT),
+                str(repository),
             ]
         )
         == 0
@@ -99,8 +117,9 @@ def test_offline_cli_writes_raw_then_report(tmp_path: Path, monkeypatch: pytest.
     assert "Negative-evidence simulation" in report.read_text(encoding="utf-8")
 
 
-def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_path: Path) -> None:
+def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rfc = rfc_source(tmp_path)
+    repository = git_repository(tmp_path, monkeypatch)
     fixture = tmp_path / "future-only.json"
     record = json.loads((ROOT / "fixtures/replay/chronological-oracle-v1.json").read_text(encoding="utf-8"))[0]
     record["content"] = {
@@ -113,7 +132,7 @@ def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_pat
     receipt = execute_offline_fixture(
         fixture_path=fixture,
         rfc_path=rfc,
-        repository_root=ROOT,
+        repository_root=repository,
         command_arguments=(),
         expected_rfc_sha256=file_sha256(rfc),
     )
@@ -124,7 +143,7 @@ def test_offline_fixture_excludes_future_tokens_and_rejects_unpinned_rfc(tmp_pat
         execute_offline_fixture(
             fixture_path=fixture,
             rfc_path=rfc,
-            repository_root=ROOT,
+            repository_root=repository,
             command_arguments=(),
             expected_rfc_sha256=PCSS_MASTER_RFC_SHA256,
         )
@@ -140,12 +159,13 @@ def test_offline_fixture_accepts_fail_closed_normalized_jsonl(tmp_path: Path) ->
     assert [record["record_id"] for record in records] == ["history-repo-a", "target-repo-b"]
 
 
-def test_capacity_ladder_admits_active_bundle_and_reports_policy_value(tmp_path: Path) -> None:
+def test_capacity_ladder_admits_active_bundle_and_reports_policy_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rfc = rfc_source(tmp_path)
+    repository = git_repository(tmp_path, monkeypatch)
     receipt = execute_offline_fixture(
         fixture_path=ROOT / "fixtures/replay/chronological-oracle-v1.json",
         rfc_path=rfc,
-        repository_root=ROOT,
+        repository_root=repository,
         command_arguments=(),
         expected_rfc_sha256=file_sha256(rfc),
     )

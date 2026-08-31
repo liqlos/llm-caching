@@ -7,7 +7,7 @@ target decoder after the target-specific correctness gates have run.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from time import monotonic_ns
 from typing import Callable, Literal, Protocol
 

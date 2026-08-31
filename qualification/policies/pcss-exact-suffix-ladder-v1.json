@@ -1,0 +1,1 @@
+{"anchors_per_successful_request":16,"continuation_tokens":8,"current_context_tier":"upstream-ngram-per-request","max_draft_tokens":2,"max_records_per_successful_request":32,"persistent_prefix_ladder":[64,32],"policy_id":"pcss.exact-suffix-ladder/v1","short_prefix_length":32,"short_prefix_rejection_breaker":3,"target_verification_required":true}

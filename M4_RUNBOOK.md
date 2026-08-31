@@ -5,7 +5,65 @@ live-decode, and edit-protocol procedure for one fixed Qwen3-8B GGUF
 configuration. Live measurements below are bounded research harnesses, not a
 production decode integration or a general PCSS speedup claim.
 
-## Current status
+## Autonomous continuation policy
+
+Work toward the requested research outcome, not completion of this procedure.
+A plan, document, commit, passing test suite, running process, run directory, or
+receipt is evidence of progress, not the result itself. Completion requires the
+explicitly requested outcome and its concrete acceptance checks. If those checks
+are not written, infer a one-sentence done condition from the request and current
+evidence before choosing work. The inferred condition must not narrow the
+requested outcome and must name observable implementation or measurement
+evidence. If a required target check is unavailable, report partial progress and
+the exact blocker; do not claim full completion. Choose the next action by how
+directly it removes the main uncertainty or produces the requested result.
+
+A kill gate in this runbook stops only the current command sequence, immutable
+run, implementation path, or evidence claim named by that gate. It is not a
+terminal condition for the research session or the original objective. After a
+gate fires, preserve the receipt and inputs, diagnose the causal failure, and
+continue with the next safe step that changes the method or input: local
+inspection, a focused regression test, a causal implementation correction, or
+a separately committed revision with a fresh run root. Never repeat an
+unchanged failed experiment merely to seek a passing result.
+
+Keep process proportional to the risk. Add a schema, checklist, review stage,
+document, abstraction, or new harness only when it protects a concrete evidence
+boundary, prevents a known failure, or is needed to judge the requested result.
+Apply each gate only to the run, path, action, or claim it explicitly names. If
+its scope is omitted, preserve the evidence, block only the unsafe target action,
+and continue reversible local work toward the original objective.
+
+Within the requested scope, reversible local investigation, implementation,
+and targeted validation do not require owner confirmation. Ask the owner only
+when progress requires new authority or input that cannot be inferred safely,
+such as spending money, using protected or unrelated resources, obtaining a
+secret, choosing between materially different objectives, or performing a
+destructive/external action. End the session only when the original objective
+and its acceptance checks are met. If a required check needs unavailable owner
+input or authority, report partial progress and name that check and dependency
+exactly. A negative experiment is an accepted result for that hypothesis, but it
+is not by itself completion of a broader research-and-implementation objective.
+
+## Current frontier
+
+- **Unresolved outcome:** no representative edit workload has yet shown useful
+  persistent cross-session PCSS candidates; the larger 12-pair edit corpus gave
+  persistent history zero incremental credit, while the cross-repository result
+  is explicitly a synthetic positive control.
+- **Next discriminating result:** measure a future-token-free persistent source
+  on a genuinely representative multi-session workload. Before reading its
+  outcome, record workload provenance and eligibility, exclude synthetic positive
+  controls and duplicated target prompts, and set a numeric offline coverage-cost
+  threshold from the bound target timings. Run that cheap offline check first;
+  perform target integration only if its clustered lower confidence bound clears
+  the recorded threshold.
+- **Decision change:** require exact output/state and a lookup-inclusive,
+  target-integrated clustered speed ratio whose lower confidence bound exceeds
+  1.0. Otherwise record a workload-scoped no-go and move to the next in-scope
+  hypothesis rather than polishing the harness.
+
+## Evidence ledger
 
 - The process-isolated pending live-decode family is a target-specific M4
   `NO_GO`: `benchmark_pending`, `live_pending`, and
@@ -13,9 +71,9 @@ production decode integration or a general PCSS speedup claim.
   before returning JSON on Qwen3-8B Q4_K_M.  The final single-context receipt
   root is `/Users/ai-server/Projects/pcss-artifacts/runs/single-context-live-e1b3e5f7cbaa-20260830/`.
   No timing, output/state comparison, confidence interval, or speedup claim
-  was produced. Do not retry this operation family; the next design must keep
-  a native model/context alive across the workload and derive from the working
-  `trajectory_pending` protocol.
+  was produced. Do not retry this operation family unchanged. Continue the
+  research with a design that keeps a native model/context alive across the
+  workload and derives from the working `trajectory_pending` protocol.
 
 - Host discovery found mac2-llm.local as Mac16,8, machine name MacBook Pro,
   with an Apple M4 Pro and 24 GiB unified memory. That discovery is not a
@@ -213,8 +271,9 @@ production decode integration or a general PCSS speedup claim.
   `c0850290083c04863c0ea0657e91164b613871269d64b964cf6fd039cc8e6268`
   (`raw/00-slug-roundtrip.json`). Therefore re-prefilling a fresh native context
   from visible token IDs is not an equivalent replacement for continuous pending
-  state on this Qwen/llama.cpp path. Do not continue the all-case roundtrip or
-  attach this reseed design to live decode; it does not invalidate the separate
+  state on this Qwen/llama.cpp path. Freeze the all-case roundtrip for this
+  reseed design and do not attach it to live decode. Continue by testing a
+  state-preserving alternative; this result does not invalidate the separate
   continuous-state bridge harness or offline provider-chain result.
 - The state-preserving alternative was then implemented as an external-draft
   form of `trajectory_pending`: each round accepts provider-produced K-token
@@ -296,10 +355,11 @@ production decode integration or a general PCSS speedup claim.
   `cpu_set_t`/`sched_*` affinity APIs on Apple and declares
   `std::shared_ptr<bool[]>` while setting C++14, which does not provide the
   required array specialization. No PCSS checkout, llama.cpp installation,
-  sidecar, model, or target decode was changed. Treat SSSD as a research
-  reference only until an independently reviewed upstream portability patch
-  builds and passes its own datastore tests; do not substitute it for the
-  immutable u32 read-only prototype.
+  sidecar, model, or target decode was changed. Continue local portability
+  investigation and testing autonomously, but treat SSSD as a research
+  reference until a portability patch builds and passes its own datastore
+  tests. Require independent review only before adopting SSSD as a runtime
+  dependency; do not substitute it for the immutable u32 read-only prototype.
 - Revision `62901edd6b1fbd4f57860476a468245508514e3d` adds a deterministic,
   trace-token-only forced-rejection profile: it replaces exactly one candidate
   token while retaining the recorded target as the authority. On the corrected
@@ -614,11 +674,12 @@ not rerun unchanged inputs under the same run ID.
 
 ## One bounded target run
 
-The e71fa7e951be2ea062689c999002030dd0b328e5 run above is complete as a
-failed kill-gate result. Do not resume it, overwrite its artifacts, alter its
-fixture/configuration, or continue with suites 11–14. The commands below are
-the exact procedure only for a future, independently committed revision and
-fresh run root; they are not authorization to retry the failed inputs.
+The e71fa7e951be2ea062689c999002030dd0b328e5 run is sealed as an immutable
+failed kill-gate result; it does not complete the research objective. Do not
+resume it, overwrite its artifacts, alter its fixture/configuration, or continue
+it with suites 11–14. Diagnose and correct the cause locally; the commands below
+are the exact procedure only for a future, independently committed revision and
+fresh run root. They are not authorization to retry the unchanged failed inputs.
 
 Use a committed checkout transferred to the target without a push. If the
 checkout is absent, transfer a Git bundle or clone the same committed revision
@@ -992,9 +1053,11 @@ intentionally absent from that run. For a future, separately committed run,
 the commands retain those four paths as the expected continuation only after
 the preceding suite verifies; a failure stops the sequence at its own receipt.
 
-## Kill gates and interpretation
+## Run kill gates, recovery, and interpretation
 
-Stop immediately and preserve the run directory if any of these happens:
+Stop the current command sequence immediately and preserve the run directory if
+any of these happens. Do not end the research session solely because a gate
+fired:
 
 - the checkout is dirty, the Git revision changes, the model SHA-256 is not
   the pinned value above, or the formula library/bridge/config file changes;
@@ -1017,6 +1080,15 @@ Stop immediately and preserve the run directory if any of these happens:
   revision/configuration;
 - the sidecar would need to be touched, inputs would need to be overwritten,
   or an unchanged failed input set would need a retry.
+
+After preserving the failed run, continue autonomously on a changed, bounded
+path: classify the failure, inspect the smallest relevant code and raw receipt,
+add or run a focused regression check, make a causal correction when supported,
+and use a new commit plus immutable run root for any fresh target action. If the
+current design is disproved, move to the next in-scope design hypothesis instead
+of rerunning it or treating the negative result as session completion. Report a
+blocker only when progress requires owner input or authority under the policy at
+the top of this runbook.
 
 A verified individual case establishes only its tested raw-token commit and
 model-memory state equivalence for that case. The isolated profile and derived

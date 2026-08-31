@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 from .canonical import ContractError, canonical_json, require_int, require_string, sha256
 

@@ -1,0 +1,6 @@
+upstream=https://github.com/ggml-org/llama.cpp.git
+revision=9723942adc518b43c4b95dc4dce6906903eb5e09
+
+# The build scripts and documentation must use this submodule, never a
+# system/Homebrew llama.cpp installation.  Local product patches live under
+# native/patches and are applied explicitly by scripts/build.sh.

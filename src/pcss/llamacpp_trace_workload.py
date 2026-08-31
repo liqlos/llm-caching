@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .canonical import ContractError, canonical_json, require_exact_keys, require_int, require_mapping, require_string, sha256
-from .llamacpp_fixture_builder import BridgeConfig, _run_reference, load_bridge_config
+from .llamacpp_fixture_builder import _run_reference, load_bridge_config
 from .manifest import validate_manifest
 from .results import (
     ResultReceipt,

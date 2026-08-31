@@ -14,7 +14,6 @@ from .provider import (
     Cursor,
     Fingerprints,
     Proposal,
-    RequestContext,
     SourceClass,
     TrustedScope,
     Feedback,

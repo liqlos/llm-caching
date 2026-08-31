@@ -382,9 +382,8 @@ def test_manifest_fails_closed_on_mismatched_target_binding_or_descriptor(
         receipt["input_fingerprints"]["runtime_configuration"] = "d" * 64
         preflight.write_text(canonical_json(receipt), encoding="utf-8")
     output, raw_result, report = _manifest_artifacts(tmp_path)
-    observer = _target_identity
-    if mutator == "other-host":
-        observer = lambda: TargetHostIdentity.from_observed(
+    def other_host_identity() -> TargetHostIdentity:
+        return TargetHostIdentity.from_observed(
             target_profile="other-target",
             operating_system="Darwin 27.0",
             architecture="arm64",
@@ -392,6 +391,10 @@ def test_manifest_fails_closed_on_mismatched_target_binding_or_descriptor(
             chip="Apple M4 Pro",
             memory_bytes=24 * 1024**3,
         )
+
+    observer = _target_identity
+    if mutator == "other-host":
+        observer = other_host_identity
 
     with pytest.raises(ContractError):
         build_observed_verifier_manifest(

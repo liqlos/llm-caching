@@ -6,7 +6,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from statistics import fmean
 from time import perf_counter_ns
 from typing import Any, Callable, Mapping, Sequence
 

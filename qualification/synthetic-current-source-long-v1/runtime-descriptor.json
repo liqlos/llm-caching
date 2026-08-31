@@ -1,0 +1,27 @@
+{
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "sampling": {
+    "cache_prompt": false,
+    "max_tokens": 128,
+    "seed": 7,
+    "stream": true,
+    "temperature": 0,
+    "top_k": 1
+  },
+  "schema_version": "pcss.live-server-runtime-fingerprint/v1",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0"
+}

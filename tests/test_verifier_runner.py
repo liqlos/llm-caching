@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from pcss import verifier_runner
+from pcss import results
 from pcss.canonical import ContractError
 from pcss.verifier import (
     AdapterAvailability,
@@ -17,6 +19,20 @@ from pcss.verifier import (
     fixture_state_digest,
 )
 from pcss.verifier_runner import _authorize_target_backend, _require_fixture_target_compatibility, execute_suite, load_cases
+
+
+def git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    repository = tmp_path / "receipt-repository"
+    repository.mkdir()
+    (repository / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    for command in (
+        ("git", "init"),
+        ("git", "add", "fixture.txt"),
+        ("git", "-c", "user.name=PCSS test", "-c", "user.email=pcss@example.invalid", "commit", "-m", "fixture"),
+    ):
+        subprocess.run(command, cwd=repository, check=True, capture_output=True, text=True)
+    monkeypatch.setattr(results, "_runtime_repository_root", lambda: repository)
+    return repository
 
 
 def unfilled_manifest() -> dict:
@@ -74,7 +90,9 @@ def fixture_payload_v4() -> dict:
     }
 
 
-def test_runner_emits_offline_fixture_receipt_without_hardware_claim(tmp_path: Path) -> None:
+def test_runner_emits_offline_fixture_receipt_without_hardware_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fixture = tmp_path / "cases.json"
     manifest = tmp_path / "manifest.json"
     fixture.write_text(json.dumps(fixture_payload()))
@@ -84,7 +102,7 @@ def test_runner_emits_offline_fixture_receipt_without_hardware_claim(tmp_path: P
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        repository_root=Path(__file__).resolve().parents[1],
+        repository_root=git_repository(tmp_path, monkeypatch),
         command_arguments=("--suite", "forced-rejection"),
     )
     assert receipt.evidence_class == "OFFLINE_FIXTURE"
@@ -302,7 +320,7 @@ def test_runner_marks_unstructured_target_execution_error_not_run(
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        repository_root=Path(__file__).resolve().parents[1],
+        repository_root=git_repository(tmp_path, monkeypatch),
         command_arguments=("--suite", "forced-rejection"),
     )
 
@@ -326,7 +344,7 @@ def test_runner_records_valid_target_mismatch_as_measured_failure(
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        repository_root=Path(__file__).resolve().parents[1],
+        repository_root=git_repository(tmp_path, monkeypatch),
         command_arguments=("--suite", "forced-rejection"),
     )
 
@@ -351,7 +369,7 @@ class SelfDeclaredTargetAdapter:
         raise AssertionError("target verification must not begin without runner authorization")
 
 
-def test_target_self_declaration_is_not_run_before_host_or_verification(tmp_path: Path) -> None:
+def test_target_self_declaration_is_not_run_before_host_or_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = tmp_path / "cases.json"
     manifest = tmp_path / "manifest.json"
     fixture.write_text(json.dumps(fixture_payload()))
@@ -363,7 +381,7 @@ def test_target_self_declaration_is_not_run_before_host_or_verification(tmp_path
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        repository_root=Path(__file__).resolve().parents[1],
+        repository_root=git_repository(tmp_path, monkeypatch),
         command_arguments=("--suite", "forced-rejection"),
     )
 
@@ -385,7 +403,7 @@ class FlippingFixtureAdapter(ScriptedFixtureAdapter):
         return AdapterAvailability("TARGET_BACKEND", "unexpected later claim")
 
 
-def test_runner_freezes_execution_class_after_initial_availability(tmp_path: Path) -> None:
+def test_runner_freezes_execution_class_after_initial_availability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = tmp_path / "cases.json"
     manifest = tmp_path / "manifest.json"
     fixture.write_text(json.dumps(fixture_payload()))
@@ -397,7 +415,7 @@ def test_runner_freezes_execution_class_after_initial_availability(tmp_path: Pat
         suite="forced-rejection",
         fixture_path=fixture,
         manifest_path=manifest,
-        repository_root=Path(__file__).resolve().parents[1],
+        repository_root=git_repository(tmp_path, monkeypatch),
         command_arguments=("--suite", "forced-rejection"),
     )
 

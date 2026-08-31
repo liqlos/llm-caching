@@ -1,4 +1,25 @@
-# PCSS llama.cpp bridge
+# PCSS native components
+
+The product path is the pinned `third_party/llama.cpp` source plus the
+maintained patch series in `native/patches`. Build it with:
+
+~~~sh
+bash scripts/build.sh
+bash scripts/native-check.sh
+~~~
+
+Launch the OpenAI-compatible product server with:
+
+~~~sh
+export PCSS_MODEL=/absolute/path/to/model.gguf
+bash scripts/run_server.sh
+~~~
+
+This builds `llama-server` with `--spec-type pcss-cache` and the persistent
+store controls. It never falls back to Homebrew or another system llama.cpp.
+See `PCSS_PRODUCT.md` for store configuration and current qualification status.
+
+## Legacy verifier bridge
 
 pcss_llama_bridge is a small process-isolated C-API bridge for verifier
 correctness. It is not a live PCSS provider and emits no timing, throughput,
@@ -9,8 +30,8 @@ one JSON object per line. All requests use
 pcss.llama-bridge-request/v1; every request must be run with its matching
 operation guard:
 
-~~~
-cmake -S native -B build/native -DLLAMA_CPP_ROOT=/opt/homebrew/Cellar/llama.cpp/10520
+~~~sh
+cmake -S native -B build/native -DLLAMA_CPP_ROOT=/absolute/path/to/pinned/llama.cpp/install
 cmake --build build/native --parallel 2
 
 build/native/pcss_llama_bridge --pcss-capabilities

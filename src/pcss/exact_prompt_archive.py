@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +17,6 @@ from typing import Any, Iterable, Mapping, Sequence
 from .archive import (
     REFERENCE_KEY_TOKENS,
     ArchiveCursor,
-    ArchiveRecord,
     ImmutableTokenArchive,
     TokenRecord,
     build_immutable_archive,

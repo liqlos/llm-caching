@@ -1,0 +1,73 @@
+{
+  "candidate_details": [
+    {
+      "episode": 1,
+      "source_tokens": 2617,
+      "trigger_offset_tokens": 64
+    },
+    {
+      "episode": 2,
+      "source_tokens": 3233,
+      "trigger_offset_tokens": 64
+    },
+    {
+      "episode": 3,
+      "source_tokens": 3233,
+      "trigger_offset_tokens": 64
+    },
+    {
+      "episode": 4,
+      "source_tokens": 3233,
+      "trigger_offset_tokens": 64
+    }
+  ],
+  "claim_boundary": "activation and safety-control preflight only; no latency, throughput, or speedup claim",
+  "construction": "base-source actual-path anchor duplicated once with a first-token-divergent pair",
+  "per_episode_metric_deltas": [
+    {
+      "episode": 1,
+      "pcss_current_source_abstentions_total": 1.0,
+      "pcss_current_source_accepted_tokens_total": 84.0,
+      "pcss_current_source_ambiguities_total": 1.0,
+      "pcss_current_source_draft_tokens_total": 84.0,
+      "pcss_current_source_hits_total": 42.0,
+      "pcss_current_source_lookups_total": 43.0,
+      "pcss_current_source_rejections_total": 0.0
+    },
+    {
+      "episode": 2,
+      "pcss_current_source_abstentions_total": 1.0,
+      "pcss_current_source_accepted_tokens_total": 84.0,
+      "pcss_current_source_ambiguities_total": 1.0,
+      "pcss_current_source_draft_tokens_total": 84.0,
+      "pcss_current_source_hits_total": 42.0,
+      "pcss_current_source_lookups_total": 43.0,
+      "pcss_current_source_rejections_total": 0.0
+    },
+    {
+      "episode": 3,
+      "pcss_current_source_abstentions_total": 1.0,
+      "pcss_current_source_accepted_tokens_total": 84.0,
+      "pcss_current_source_ambiguities_total": 1.0,
+      "pcss_current_source_draft_tokens_total": 84.0,
+      "pcss_current_source_hits_total": 42.0,
+      "pcss_current_source_lookups_total": 43.0,
+      "pcss_current_source_rejections_total": 0.0
+    },
+    {
+      "episode": 4,
+      "pcss_current_source_abstentions_total": 1.0,
+      "pcss_current_source_accepted_tokens_total": 84.0,
+      "pcss_current_source_ambiguities_total": 1.0,
+      "pcss_current_source_draft_tokens_total": 84.0,
+      "pcss_current_source_hits_total": 42.0,
+      "pcss_current_source_lookups_total": 43.0,
+      "pcss_current_source_rejections_total": 0.0
+    }
+  ],
+  "raw_source_material_retained": false,
+  "schema_version": "pcss.current-source-one-ambiguity-preflight/v1",
+  "status": "PASS",
+  "trigger_offset_tokens": 64,
+  "workload_sha256": "e0eba146ce36fbfc39f9c0f0a599ec4ba474eead940c8cfc4f9c0701604e6be7"
+}

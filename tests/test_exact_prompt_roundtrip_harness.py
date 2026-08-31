@@ -3,7 +3,6 @@ from __future__ import annotations
 from pcss.exact_prompt_roundtrip_harness import _request, _validate_round
 from pcss.llamacpp_fixture_builder import BridgeConfig
 from pcss.provider import Proposal, TrustedScope
-from pcss.provider import Fingerprints
 from pathlib import Path
 
 

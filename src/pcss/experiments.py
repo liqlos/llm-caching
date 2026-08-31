@@ -18,7 +18,6 @@ from typing import Any
 from .replay import (
     Candidate,
     Opportunity,
-    ReplayError,
     ReplayResult,
     ScopeIdentity,
     SourceTier,

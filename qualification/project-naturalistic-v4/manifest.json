@@ -1,0 +1,240 @@
+{
+  "allowed_policy_families": [
+    "ordinary-target-decoding",
+    "upstream-ngram-cache-k2",
+    "hybrid-pcss-persistent-first-upstream-ngram-current-context"
+  ],
+  "arm_order": [
+    "baseline",
+    "upstream-ngram-cache",
+    "pcss-cache"
+  ],
+  "arm_store_initialization": {
+    "baseline": {
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "pcss-cache": {
+      "initialization": "fresh process with empty full-PCSS store",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "upstream-ngram-cache": {
+      "initialization": "fresh process with empty in-memory ngram cache",
+      "snapshot_sha256": null,
+      "state": "cold"
+    }
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "disable_current_context": false,
+        "disable_learning": false,
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "max_disk_gib": 1,
+        "max_draft_tokens": 2,
+        "namespace": "project-naturalistic-v2",
+        "ram_mib": 16,
+        "read_only": false
+      }
+    }
+  ],
+  "budgets": {
+    "max_artifact_bytes": 104857600,
+    "max_requests": 96,
+    "max_wall_clock_seconds": 1200
+  },
+  "calibration_split": {
+    "request_ids": [
+      "9a43c962-01fa-4cf3-95f5-21e9e256aea7",
+      "317d8fb9-9ff0-4535-8252-b485aaad6c17",
+      "1bb75f79-fc56-4f18-8361-abb6648df848",
+      "222faad3-eccf-4ac0-91a7-55309d89ec0f",
+      "979e33d0-9de6-4771-90f9-78dd10a02dcc",
+      "176f1280-51ce-4f1d-8414-a9f59f740f17",
+      "65a13daf-431f-4da9-b678-9454722ca2d1",
+      "62a3953b-335d-4fa6-bc76-b1c54f155e64",
+      "d4521ef7-6f09-4845-9398-bc3cb1cdc356",
+      "06461e5a-7db4-42a7-aaec-ba0a0392636e",
+      "5a72a5f1-27f8-46e5-88da-52d11ec6e4fa",
+      "072590b9-0d90-478e-8c2c-b7549a338d63",
+      "73d78f95-2fcd-42c1-bf0f-255d13dc2914",
+      "b44851c8-00f0-4ef9-a531-932ccc551e50",
+      "a35164b1-268f-43bc-85b5-b31ffb4fd5a2",
+      "65bbc815-8457-4e54-9f24-4a6ca1b71806",
+      "4afb63f9-4027-400e-a4bb-4b6036785202",
+      "2bcb3fcf-777f-463b-b200-2affe4716a36",
+      "1935b994-15b4-4ae7-a9cb-98938aca3c99",
+      "c6b7f52b-ddf2-4a87-bfd4-c58dc037ad33",
+      "0483645f-69cc-49f3-8c12-622e2af60b6f",
+      "866a923b-0268-4f17-a144-b5311e68b9a1",
+      "3d3c0569-22ae-43e8-beb2-1817227a25a4",
+      "5c021ec0-ee66-43e4-953c-41d0dfaef65e",
+      "5bc99874-c4de-4c39-a5b8-e221b8086e3f",
+      "f231e793-3f1e-42ec-8b6c-a623902d84ae",
+      "8f737c6c-5a82-436d-9f90-c6899565acc3",
+      "c83d4506-6f9e-43c1-a704-3d37c23a5b92",
+      "bde51989-6b9c-44c0-a4c7-945985af64ea",
+      "2815fd68-2e30-4d79-b653-cf2eb1953a36",
+      "842109d5-ddc3-4111-8c0d-57d4f5ceeeaf",
+      "0ec9354e-da09-493f-af9f-e79a88137a55"
+    ],
+    "tuning_permitted": false
+  },
+  "claim_boundary": "Project-local development evidence from operator-authorized agent-assisted ordinary local requests only. V4 requires exact baseline-PCSS equality; upstream ngram is reporting-only because it has a preserved greedy-output divergence receipt. No owner-representative, broad, default-enable, best-in-class, or transferable claim.",
+  "clustering": {
+    "method": "trusted proxy episode UUID",
+    "request_cluster_ids": {
+      "0483645f-69cc-49f3-8c12-622e2af60b6f": "42731b39-ad35-4290-93f1-591d96602fc3",
+      "06461e5a-7db4-42a7-aaec-ba0a0392636e": "b8a05b05-649f-4ebf-8a42-a4b495de6a83",
+      "072590b9-0d90-478e-8c2c-b7549a338d63": "b8a05b05-649f-4ebf-8a42-a4b495de6a83",
+      "0ec9354e-da09-493f-af9f-e79a88137a55": "0134dd83-60ab-4756-beae-9d58089be88e",
+      "176f1280-51ce-4f1d-8414-a9f59f740f17": "005c471a-e901-4b7c-8e80-beebed086a3e",
+      "1935b994-15b4-4ae7-a9cb-98938aca3c99": "fc986b13-5051-4f34-82ef-5a89ad6099a2",
+      "1bb75f79-fc56-4f18-8361-abb6648df848": "f553a850-2ef7-4ffe-8ff5-f72c650cb195",
+      "222faad3-eccf-4ac0-91a7-55309d89ec0f": "f553a850-2ef7-4ffe-8ff5-f72c650cb195",
+      "2815fd68-2e30-4d79-b653-cf2eb1953a36": "0134dd83-60ab-4756-beae-9d58089be88e",
+      "2bcb3fcf-777f-463b-b200-2affe4716a36": "fc986b13-5051-4f34-82ef-5a89ad6099a2",
+      "317d8fb9-9ff0-4535-8252-b485aaad6c17": "f553a850-2ef7-4ffe-8ff5-f72c650cb195",
+      "3d3c0569-22ae-43e8-beb2-1817227a25a4": "42731b39-ad35-4290-93f1-591d96602fc3",
+      "4afb63f9-4027-400e-a4bb-4b6036785202": "fc986b13-5051-4f34-82ef-5a89ad6099a2",
+      "5a72a5f1-27f8-46e5-88da-52d11ec6e4fa": "b8a05b05-649f-4ebf-8a42-a4b495de6a83",
+      "5bc99874-c4de-4c39-a5b8-e221b8086e3f": "e74be9d5-81f5-4063-8b89-df23f9a247a1",
+      "5c021ec0-ee66-43e4-953c-41d0dfaef65e": "42731b39-ad35-4290-93f1-591d96602fc3",
+      "62a3953b-335d-4fa6-bc76-b1c54f155e64": "005c471a-e901-4b7c-8e80-beebed086a3e",
+      "65a13daf-431f-4da9-b678-9454722ca2d1": "005c471a-e901-4b7c-8e80-beebed086a3e",
+      "65bbc815-8457-4e54-9f24-4a6ca1b71806": "5545b10d-77b0-4162-90ae-cb59289fbb9f",
+      "73d78f95-2fcd-42c1-bf0f-255d13dc2914": "5545b10d-77b0-4162-90ae-cb59289fbb9f",
+      "842109d5-ddc3-4111-8c0d-57d4f5ceeeaf": "0134dd83-60ab-4756-beae-9d58089be88e",
+      "866a923b-0268-4f17-a144-b5311e68b9a1": "42731b39-ad35-4290-93f1-591d96602fc3",
+      "8f737c6c-5a82-436d-9f90-c6899565acc3": "e74be9d5-81f5-4063-8b89-df23f9a247a1",
+      "979e33d0-9de6-4771-90f9-78dd10a02dcc": "005c471a-e901-4b7c-8e80-beebed086a3e",
+      "9a43c962-01fa-4cf3-95f5-21e9e256aea7": "f553a850-2ef7-4ffe-8ff5-f72c650cb195",
+      "a35164b1-268f-43bc-85b5-b31ffb4fd5a2": "5545b10d-77b0-4162-90ae-cb59289fbb9f",
+      "b44851c8-00f0-4ef9-a531-932ccc551e50": "5545b10d-77b0-4162-90ae-cb59289fbb9f",
+      "bde51989-6b9c-44c0-a4c7-945985af64ea": "0134dd83-60ab-4756-beae-9d58089be88e",
+      "c6b7f52b-ddf2-4a87-bfd4-c58dc037ad33": "fc986b13-5051-4f34-82ef-5a89ad6099a2",
+      "c83d4506-6f9e-43c1-a704-3d37c23a5b92": "e74be9d5-81f5-4063-8b89-df23f9a247a1",
+      "d4521ef7-6f09-4845-9398-bc3cb1cdc356": "b8a05b05-649f-4ebf-8a42-a4b495de6a83",
+      "f231e793-3f1e-42ec-8b6c-a623902d84ae": "e74be9d5-81f5-4063-8b89-df23f9a247a1"
+    }
+  },
+  "counterbalance": {
+    "method": "latin_square",
+    "sequence_id": "row-1"
+  },
+  "effect_gates": {
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_arms": [
+      "pcss-cache"
+    ],
+    "exact_output_required": true,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster"
+  },
+  "eligibility_rules": [
+    "first four visible ordinary local requests from each captured episode",
+    "all sealed requests dispatch once per arm in chronological order",
+    "no request selection by PCSS reuse, answer, or outcome",
+    "preserve all misses, failures, cancellations, and outliers"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure and timeout in raw samples"
+  ],
+  "finite_parameter_grids": {
+    "draft_tokens": [
+      2
+    ],
+    "lookup_bytes": [
+      262144
+    ],
+    "lookup_probes": [
+      256
+    ],
+    "prefix_tokens": [
+      64
+    ],
+    "upstream_ngram_draft_tokens": [
+      2
+    ]
+  },
+  "frozen": true,
+  "git_revision": "027067bb3f3099c7c45f41261bcfd444c0f3ac4f",
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "holdout": false,
+  "holdout_split": {
+    "one_shot": false,
+    "request_ids": []
+  },
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "exact output mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "patch_sha256": "329d8179e4bb6fe75c2b24aead91537326e1f930e6b0d655bd6f4d51200787e4",
+  "readiness": {
+    "interval_seconds": 0.25,
+    "max_attempts": 120,
+    "path": "/health",
+    "timeout_seconds": 30
+  },
+  "request_count": 32,
+  "request_defaults": {
+    "max_tokens": 64,
+    "seed": 123,
+    "stream": true,
+    "temperature": 0
+  },
+  "request_timeout_seconds": 30,
+  "resource_ceilings": {
+    "compaction_write_amplification_max": 2,
+    "disk_gib": 1,
+    "ram_mib": 8192,
+    "startup_seconds": 30
+  },
+  "runtime_fingerprint": "fa4f5a210752f43a9554ae0a41bde858791cc92f17134b1111eb9e1bc1916667",
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0",
+  "state_definitions": {
+    "cold": "fresh process and empty arm-owned state before the first request",
+    "warm": "same isolated live process after earlier chronological requests"
+  },
+  "stopping_rule": "stop after all three frozen arms consume the sealed chronological project-local workload once or any correctness/resource kill gate fires",
+  "study_id": "project-naturalistic-v4-329d8179",
+  "workload_class": "project_naturalistic_development",
+  "workload_provenance": {
+    "capture_protocol": "pcss.project-capture-proxy/1",
+    "captured_before_arm_results": true,
+    "immutable": true,
+    "source": "operator-authorized agent-assisted ordinary local PCSS development requests, captured by trusted loopback pre-forward proxy; capture receipt sha256:52237598e0b383ddf439fa738d5e4d135b15ed9d652d5412fb3d7caccb6840ee; V2 was invalid solely because upstream ngram used an unsafe implicit draft cap; V3 freezes runner-owned upstream ngram cap at 2; V3 remained invalid because upstream ngram K2 diverged from greedy output; V4 retains that arm as reporting-only and requires exact equality only for baseline versus PCSS"
+  },
+  "workload_sha256": "66d7afb30c73ab7befc693b0e69c4c7e715ac4766b15afb5b252e19159588a4a"
+}

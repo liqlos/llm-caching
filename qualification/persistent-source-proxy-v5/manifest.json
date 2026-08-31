@@ -1,0 +1,87 @@
+{
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "study_id": "persistent-source-proxy-v5-13c628a6",
+  "frozen": true,
+  "git_revision": "027067bb3f3099c7c45f41261bcfd444c0f3ac4f",
+  "patch_sha256": "13c628a6a906a0d744cd31ca6d7241303df1a082175f72875ecf2dff1c6b85f1",
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "runtime_fingerprint": "0fa94d2973b01cb61cd5f61b1ee2056f414cce2be9e44a9f866bd3559fcc8b09",
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "workload_sha256": "e144daca6ce2107c2a607e14cf0124c6632b429968756ded7af14a1f3976aa4d",
+  "workload_class": "synthetic_control",
+  "holdout": false,
+  "workload_provenance": {
+    "source": "pre-existing agent-authored source-edit fixture; calibration proxy only",
+    "capture_protocol": "pcss.synthetic-source-edit-proxy/v1",
+    "captured_before_arm_results": true,
+    "immutable": true
+  },
+  "eligibility_rules": [
+    "dispatch every frozen request once per arm in chronological order",
+    "request bodies contain prompts only and no expected or future output",
+    "retain every request including misses, rejected drafts, failures, and outliers"
+  ],
+  "calibration_split": {
+    "request_ids": ["clamp-source", "json-source", "typescript-source", "clamp-edited", "json-edited", "typescript-edited"],
+    "tuning_permitted": true
+  },
+  "holdout_split": {"request_ids": [], "one_shot": false},
+  "clustering": {
+    "method": "source-edit family",
+    "request_cluster_ids": {
+      "clamp-source": "clamp", "clamp-edited": "clamp",
+      "json-source": "json", "json-edited": "json",
+      "typescript-source": "typescript", "typescript-edited": "typescript"
+    }
+  },
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0",
+  "server_args": ["--ctx-size", "1024", "--threads", "4", "--parallel", "1", "--n-gpu-layers", "99"],
+  "request_defaults": {"max_tokens": 48, "temperature": 0, "seed": 123, "stream": true},
+  "arms": [
+    {"name": "baseline"},
+    {"name": "upstream-ngram-cache"},
+    {"name": "pcss-cache", "pcss": {
+      "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+      "namespace": "persistent-source-proxy-v5",
+      "max_disk_gib": 1,
+      "ram_mib": 16,
+      "read_only": false,
+      "disable_learning": false,
+      "disable_current_context": true
+    }}
+  ],
+  "arm_order": ["upstream-ngram-cache", "pcss-cache", "baseline"],
+  "counterbalance": {"method": "latin_square", "sequence_id": "row-2"},
+  "state_definitions": {
+    "warm": "same isolated live process after earlier chronological requests",
+    "cold": "fresh process and empty arm-owned state before the first request"
+  },
+  "arm_store_initialization": {
+    "baseline": {"state": "cold", "initialization": "fresh process with speculation disabled", "snapshot_sha256": null},
+    "upstream-ngram-cache": {"state": "cold", "initialization": "fresh process with empty in-memory ngram cache", "snapshot_sha256": null},
+    "pcss-cache": {"state": "cold", "initialization": "fresh process with empty persistent-only PCSS store", "snapshot_sha256": null}
+  },
+  "readiness": {"path": "/health", "timeout_seconds": 30, "max_attempts": 120, "interval_seconds": 0.25},
+  "request_timeout_seconds": 30,
+  "request_count": 6,
+  "effect_gates": {
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster",
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_required": true
+  },
+  "resource_ceilings": {"ram_mib": 8192, "disk_gib": 1, "startup_seconds": 30, "compaction_write_amplification_max": 2},
+  "allowed_policy_families": ["ordinary-target-decoding", "upstream-ngram-cache", "persistent-exact-pcss-without-current-context"],
+  "finite_parameter_grids": {"draft_tokens": [8], "prefix_tokens": [64], "lookup_probes": [256], "lookup_bytes": [262144]},
+  "budgets": {"max_requests": 18, "max_wall_clock_seconds": 600, "max_artifact_bytes": 52428800},
+  "stopping_rule": "stop after all three frozen arms consume the chronological proxy once or any correctness/resource kill gate fires",
+  "kill_gates": ["server crash or nonzero exit", "request timeout or malformed OpenAI response", "exact output mismatch", "RAM, disk, startup, wall-clock, request, or artifact ceiling breach", "swap thrashing, thermal throttling, or system health degradation"],
+  "exclusion_rules": ["exclude no request after arm results are visible", "preserve every failure and timeout in raw samples"],
+  "claim_boundary": "Calibration proxy from agent-authored source-edit prompts only. It may guide implementation but cannot support a representative, broad, default-enable, or transferable speedup claim."
+}

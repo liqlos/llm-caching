@@ -27,7 +27,9 @@ elseif(TARGET llama)
     target_link_libraries(pcss_llama_bridge PRIVATE llama)
 else()
     if(NOT LLAMA_CPP_ROOT)
-        set(LLAMA_CPP_ROOT "/opt/homebrew/opt/llama.cpp")
+        message(FATAL_ERROR
+            "LLAMA_CPP_ROOT is required for the legacy verifier bridge. "
+            "Build the pinned server with scripts/build.sh; do not fall back to Homebrew.")
     endif()
 
     find_path(LLAMA_CPP_INCLUDE_DIR

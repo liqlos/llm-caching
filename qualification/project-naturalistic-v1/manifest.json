@@ -1,0 +1,234 @@
+{
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "study_id": "project-naturalistic-v1-b3952aff",
+  "frozen": true,
+  "git_revision": "027067bb3f3099c7c45f41261bcfd444c0f3ac4f",
+  "patch_sha256": "b3952aff69732a69dbaeaf59a2d36df6e8f70e319782c61d842bb677a29153d7",
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "runtime_fingerprint": "cab9f11839c75d8e37a94e4529c89ab8faec95798ee61617d69641f6267d51b3",
+  "hardware_os": {
+    "hardware": "Apple M1 Pro, 10 cores, 16 GB RAM",
+    "os": "macOS 26.4.1, Darwin 25.4.0, arm64"
+  },
+  "workload_sha256": "8ee6629eb429984aafec26e41eaa8a49ec8782c1580edf54c2589bb39f7bd323",
+  "workload_class": "project_naturalistic_development",
+  "holdout": false,
+  "workload_provenance": {
+    "source": "operator-authorized agent-assisted ordinary local PCSS development requests, captured by trusted loopback pre-forward proxy; capture receipt sha256:133df2b771bb611db95e845ac2bdb057077f537dc296bdefdaa104c77f463a6e",
+    "capture_protocol": "pcss.project-capture-proxy/1",
+    "captured_before_arm_results": true,
+    "immutable": true
+  },
+  "eligibility_rules": [
+    "first four visible ordinary local requests from each captured episode",
+    "all sealed requests dispatch once per arm in chronological order",
+    "no request selection by PCSS reuse, answer, or outcome",
+    "preserve all misses, failures, cancellations, and outliers"
+  ],
+  "calibration_split": {
+    "request_ids": [
+      "a185732c-2c1b-4e08-9332-bbe51c1ca7e3",
+      "847d47cc-5a65-48a6-8a0d-b31d70d1662f",
+      "8a0be67c-fe38-4e89-a805-d073b1b27331",
+      "3b331742-f828-4d71-ae97-a924297a29f5",
+      "62917fd8-258e-4ae4-89c4-babf88bd4b5a",
+      "292057ff-95b1-4268-8978-09fad8f9afa3",
+      "311e076b-0d32-4ccb-a340-63554d8751ea",
+      "4ef1f3a3-50ef-4cf4-be2d-db879f56882a",
+      "23df0b01-561f-4d31-99f9-cfba9c62859a",
+      "de2cc383-d133-4c6f-9561-a5012c8db037",
+      "08f29881-56f0-466d-ae8e-a0168c8964f3",
+      "2a941178-e63b-4ca3-b628-c5334a4a0de4",
+      "a6b36aeb-739a-4bea-a56e-3fd2d35f53af",
+      "5250ea5f-a7d5-4dff-b4f5-5e32f3a59840",
+      "aa7e404a-7b7a-4ec1-a6a2-b7f58775e07a",
+      "a01bbb23-c8e1-49a2-b845-056a49ea98a6",
+      "19e41c8b-e7b8-4ea4-89ba-cb24f503c4dc",
+      "4a5a1ffc-a375-4e65-ab83-c608485f8de8",
+      "145df891-19d3-4021-ada0-8b5dab187339",
+      "fc31a2a8-22bc-493a-8687-9ecad9bd1b4c",
+      "bbd87be1-0c5f-4b06-814f-db36a43c1407",
+      "b0d7f44f-9ac6-4e2e-8e90-7e2faaefac55",
+      "69d0bb2c-120a-4063-9e57-5676b787c066",
+      "06a14039-8ddf-48a2-add8-8fc03761fe6f",
+      "cd9c73e9-e633-4fe8-9d88-c276e24d92d0",
+      "182392fe-e712-4b04-98ac-e8f69424048b",
+      "43a7ad73-684c-4ae7-8303-64933ec35b0e",
+      "79159ad4-4d77-4cc0-8d5d-1c6f97d10bce",
+      "48028d35-0081-48b8-99c3-c1485a06f0f8",
+      "4fce1dea-2043-4b8e-872e-c12f2e39e913",
+      "4d41af62-928e-4caf-82a1-adee10d24ea3",
+      "c5988c6e-34e6-4dd2-8fa6-f44b13cf2742"
+    ],
+    "tuning_permitted": false
+  },
+  "holdout_split": {
+    "request_ids": [],
+    "one_shot": false
+  },
+  "clustering": {
+    "method": "trusted proxy episode UUID",
+    "request_cluster_ids": {
+      "a185732c-2c1b-4e08-9332-bbe51c1ca7e3": "6270269c-9615-4076-a6be-67f69d9bba61",
+      "847d47cc-5a65-48a6-8a0d-b31d70d1662f": "6270269c-9615-4076-a6be-67f69d9bba61",
+      "8a0be67c-fe38-4e89-a805-d073b1b27331": "6270269c-9615-4076-a6be-67f69d9bba61",
+      "3b331742-f828-4d71-ae97-a924297a29f5": "6270269c-9615-4076-a6be-67f69d9bba61",
+      "62917fd8-258e-4ae4-89c4-babf88bd4b5a": "42977e36-b356-4122-8159-9530ba869d4a",
+      "292057ff-95b1-4268-8978-09fad8f9afa3": "42977e36-b356-4122-8159-9530ba869d4a",
+      "311e076b-0d32-4ccb-a340-63554d8751ea": "42977e36-b356-4122-8159-9530ba869d4a",
+      "4ef1f3a3-50ef-4cf4-be2d-db879f56882a": "42977e36-b356-4122-8159-9530ba869d4a",
+      "23df0b01-561f-4d31-99f9-cfba9c62859a": "d4c3c0ea-a979-420a-b8c5-a4795e3ef610",
+      "de2cc383-d133-4c6f-9561-a5012c8db037": "d4c3c0ea-a979-420a-b8c5-a4795e3ef610",
+      "08f29881-56f0-466d-ae8e-a0168c8964f3": "d4c3c0ea-a979-420a-b8c5-a4795e3ef610",
+      "2a941178-e63b-4ca3-b628-c5334a4a0de4": "d4c3c0ea-a979-420a-b8c5-a4795e3ef610",
+      "a6b36aeb-739a-4bea-a56e-3fd2d35f53af": "bda7aeff-32f4-4e73-b162-04c6df57a644",
+      "5250ea5f-a7d5-4dff-b4f5-5e32f3a59840": "bda7aeff-32f4-4e73-b162-04c6df57a644",
+      "aa7e404a-7b7a-4ec1-a6a2-b7f58775e07a": "bda7aeff-32f4-4e73-b162-04c6df57a644",
+      "a01bbb23-c8e1-49a2-b845-056a49ea98a6": "bda7aeff-32f4-4e73-b162-04c6df57a644",
+      "19e41c8b-e7b8-4ea4-89ba-cb24f503c4dc": "d5cada29-b1d8-4b5a-a40b-74a0281ca33f",
+      "4a5a1ffc-a375-4e65-ab83-c608485f8de8": "d5cada29-b1d8-4b5a-a40b-74a0281ca33f",
+      "145df891-19d3-4021-ada0-8b5dab187339": "d5cada29-b1d8-4b5a-a40b-74a0281ca33f",
+      "fc31a2a8-22bc-493a-8687-9ecad9bd1b4c": "d5cada29-b1d8-4b5a-a40b-74a0281ca33f",
+      "bbd87be1-0c5f-4b06-814f-db36a43c1407": "981ec540-b329-428c-83da-732e18dd94a4",
+      "b0d7f44f-9ac6-4e2e-8e90-7e2faaefac55": "981ec540-b329-428c-83da-732e18dd94a4",
+      "69d0bb2c-120a-4063-9e57-5676b787c066": "981ec540-b329-428c-83da-732e18dd94a4",
+      "06a14039-8ddf-48a2-add8-8fc03761fe6f": "981ec540-b329-428c-83da-732e18dd94a4",
+      "cd9c73e9-e633-4fe8-9d88-c276e24d92d0": "493aaff9-fc8e-4880-b5a4-62dc1ddfce79",
+      "182392fe-e712-4b04-98ac-e8f69424048b": "493aaff9-fc8e-4880-b5a4-62dc1ddfce79",
+      "43a7ad73-684c-4ae7-8303-64933ec35b0e": "493aaff9-fc8e-4880-b5a4-62dc1ddfce79",
+      "79159ad4-4d77-4cc0-8d5d-1c6f97d10bce": "493aaff9-fc8e-4880-b5a4-62dc1ddfce79",
+      "48028d35-0081-48b8-99c3-c1485a06f0f8": "b0862693-ed8e-4c5e-bd2e-25d9a6d4ef6d",
+      "4fce1dea-2043-4b8e-872e-c12f2e39e913": "b0862693-ed8e-4c5e-bd2e-25d9a6d4ef6d",
+      "4d41af62-928e-4caf-82a1-adee10d24ea3": "b0862693-ed8e-4c5e-bd2e-25d9a6d4ef6d",
+      "c5988c6e-34e6-4dd2-8fa6-f44b13cf2742": "b0862693-ed8e-4c5e-bd2e-25d9a6d4ef6d"
+    }
+  },
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "server_sha256": "fa998955dae772a47b35e3dfef0d3cb083e184befe6e9f8202f934227f51d3d0",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "request_defaults": {
+    "max_tokens": 64,
+    "temperature": 0,
+    "seed": 123,
+    "stream": true
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "namespace": "project-naturalistic-v1",
+        "max_disk_gib": 1,
+        "ram_mib": 16,
+        "read_only": false,
+        "disable_learning": false,
+        "disable_current_context": false,
+        "max_draft_tokens": 2
+      }
+    }
+  ],
+  "arm_order": [
+    "baseline",
+    "upstream-ngram-cache",
+    "pcss-cache"
+  ],
+  "counterbalance": {
+    "method": "latin_square",
+    "sequence_id": "row-1"
+  },
+  "state_definitions": {
+    "warm": "same isolated live process after earlier chronological requests",
+    "cold": "fresh process and empty arm-owned state before the first request"
+  },
+  "arm_store_initialization": {
+    "baseline": {
+      "state": "cold",
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null
+    },
+    "upstream-ngram-cache": {
+      "state": "cold",
+      "initialization": "fresh process with empty in-memory ngram cache",
+      "snapshot_sha256": null
+    },
+    "pcss-cache": {
+      "state": "cold",
+      "initialization": "fresh process with empty full-PCSS store",
+      "snapshot_sha256": null
+    }
+  },
+  "readiness": {
+    "path": "/health",
+    "timeout_seconds": 30,
+    "max_attempts": 120,
+    "interval_seconds": 0.25
+  },
+  "request_timeout_seconds": 30,
+  "request_count": 32,
+  "effect_gates": {
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster",
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_required": true
+  },
+  "resource_ceilings": {
+    "ram_mib": 8192,
+    "disk_gib": 1,
+    "startup_seconds": 30,
+    "compaction_write_amplification_max": 2
+  },
+  "allowed_policy_families": [
+    "ordinary-target-decoding",
+    "upstream-ngram-cache",
+    "conservative-exact-pcss-current-context-plus-persistent"
+  ],
+  "finite_parameter_grids": {
+    "draft_tokens": [
+      2
+    ],
+    "prefix_tokens": [
+      64
+    ],
+    "lookup_probes": [
+      256
+    ],
+    "lookup_bytes": [
+      262144
+    ]
+  },
+  "budgets": {
+    "max_requests": 96,
+    "max_wall_clock_seconds": 1200,
+    "max_artifact_bytes": 104857600
+  },
+  "stopping_rule": "stop after all three frozen arms consume the sealed chronological project-local workload once or any correctness/resource kill gate fires",
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "exact output mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure and timeout in raw samples"
+  ],
+  "claim_boundary": "Project-local development evidence from operator-authorized agent-assisted ordinary local requests only. No owner-representative, broad, default-enable, best-in-class, or transferable claim."
+}
