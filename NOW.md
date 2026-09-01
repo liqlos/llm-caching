@@ -1,308 +1,229 @@
-# SSD L2 current handoff
+# Current handoff — MLX line
 
-`docs/SSD_L2_CACHE.md` is the sole current-state authority for behavior,
-receipts, and recorded verdicts; `NOW.md` is the sole authority for the
-plan, gates, and execution rules. If the two disagree on gate status, the
-plan here wins and the doc gets reconciled.
+`docs/MLX_CACHE.md` is the sole current-state authority for behavior,
+receipts, and recorded verdicts of the MLX line. `NOW.md` is the sole
+authority for the plan, gates, and execution rules. If they disagree on
+gate status, the plan here wins and the doc gets reconciled.
+
+## Strategic decision (2026-09-01)
+
+The product is a multi-level (RAM + persistent SSD) prompt/KV cache for the
+owner's own Apple Silicon machines, built on **MLX / mlx-lm**, not on
+llama.cpp. Reasons: the owner runs Macs; MLX is the native, usually faster
+engine there; mlx-lm already ships the RAM tier (`LRUPromptCache`) and the
+serialization primitives, so the missing piece — a persistent disk tier — is
+a Python increment on top of existing infrastructure rather than a C++
+subsystem; and mlx-lm's contribution bar is realistic for incremental PRs.
+
+The llama.cpp line is **frozen**, not deleted: its fork, patches, receipts,
+and `docs/SSD_L2_CACHE.md` stay as evidence and as a possible upstream
+trigger-fix contribution. Do not continue it unless the owner reopens it.
 
 ## Reading order and what does NOT bind
 
-- Read `NOW.md`, then `docs/SSD_L2_CACHE.md`. Nothing else is required.
+- Read `NOW.md`, then `docs/MLX_CACHE.md`. Nothing else is required.
+- `docs/SSD_L2_CACHE.md` is the frozen llama.cpp-line authority; read it
+  for transferable findings (listed in `docs/MLX_CACHE.md`), not for
+  instructions.
 - `PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `native/README.md`, and everything
   under `qualification/` are the historical PCSS / sequence-datastore line.
-  Their kill gates, acceptance thresholds (e.g. `LCB95 >= 1.05`), proxy
-  capture and owner-holdout rules, and "do not retry" clauses bind ONLY that
-  historical line. They are not evidence standards for SSD L2 work and must
-  not be imported into it.
-- `third_party/llama.cpp` is the owner's private fork
-  `https://github.com/liqlos/llama.cpp` (branch `main`; remote `origin`
-  in the submodule, with `upstream` = `ggml-org/llama.cpp`). Its
-  `AGENTS.md` / `CLAUDE.md` describe rules for contributing to upstream
-  llama.cpp; by its own text private forks are exempt. Commits to the
-  submodule are ordinary in-scope work under this repository's rules and
-  need no per-action approval — commit in the submodule, push its `main`
-  to `origin`, then commit the updated gitlink here. The upstream rules
-  apply only when an actual upstream PR is being prepared, and that step is
-  always owner-driven.
-- This repository has no separate "commit policy" beyond the owner's
-  standing instructions: in-scope commits that advance the plan are allowed.
-- **Native source reproducibility.** The product source is the private
-  fork's `main`: upstream PIN revision (`third_party/llama.cpp.PIN`) plus
-  the cache commits. `git submodule update --init` on a fresh clone fetches
-  it from the fork. `native/patches/*.patch` mirrors the same commits so a
-  build can also be reproduced from the bare upstream PIN; `scripts/build.sh`
-  verifies that the checkout equals PIN + series and refuses anything else.
-  Whenever the submodule gains a commit, push it to the fork AND regenerate
-  the series (`git -C third_party/llama.cpp format-patch <PIN>..HEAD`),
-  verify it applies cleanly on the PIN, and commit both together.
-  On the M4 host, sync with `git pull && git submodule update --init` (the
-  submodule's `origin` there may still point at upstream — run
-  `git submodule sync` first).
-
-## Gate status: `G1b_NO_GO_UNDER_FORCED_DISK_CONFIG` → Phase 1c required
-
-Phase 1b (`artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/RUN_SUMMARY.md`)
-delivered three things that stand: the single-slot save trigger patch
-(uncommitted in `third_party/llama.cpp`, awaiting owner approval), a working
-owner-trace corpus pipeline (v2 cross-project, v2b single-project), and the
-**first real-traffic profit ever measured in this project**: on hit turns
-with reused prefix under ~4,000 tokens the SSD arm was 1.05x–1.3x faster
-than baseline in both corpora independently.
-
-Its `NO_GO_SSD_L2_PRODUCT` verdict is NOT accepted as final, for a reason
-the run itself flagged: it was executed with `--cache-ram 1` (1 MiB), i.e. a
-degenerate single-tier SSD-only cache with no RAM tier. Under that config
-every turn pays a full disk round-trip, every completion save is demoted to
-disk immediately (gigabytes written; the v2b store sat at its 4096 MiB quota
-ceiling, so compaction ran inside the measured window), and the measured
-1.7x–1.8x slowdown at 8k–15k reused tokens is the cost of that write/restore
-path, not of multi-level caching. The product goal is a multi-level
-RAM+SSD cache; that configuration has not been measured on owner traffic.
-The gate's pre-registered thresholds were therefore evaluated on the wrong
-mechanism, and the two-strike rule wrongly blocked the correction — fixed
-below (a tier-configuration change that alters the mechanism under test is a
-new hypothesis).
-
-Also not accepted as evidence of absent demand: the binary
-first-turn-after-restart hit metric (0/3, then 1/3) on three restart
-boundaries is too small a sample to decide anything, and a missed
-post-restart partial hit on a byte-identical preamble points at checkpoint
-placement (granularity), not at absent reuse.
-
-### Phase 1c — Measure the actual product: multi-level RAM+SSD on owner traffic
-
-First action: commit the trigger patch in `third_party/llama.cpp` and the
-pending `NOW.md` / `docs/SSD_L2_CACHE.md` changes (see "Reading order" — no
-per-action approval is needed for submodule commits in this repo).
-
-1. **Decompose the hit-turn cost first, from data already collected.**
-   Server logs carry `prompt cache update took … ms` and eviction/disk
-   lines; split `ssd_s` on hit turns into restore vs save/demote/compaction.
-   Expected finding: save-on-completion of a growing conversation rewrites
-   the full state every turn (quadratic bytes), and with RAM=1 MiB each
-   write goes straight to disk. Record the decomposition as a receipt before
-   changing anything.
-2. **Fix the write amplification if step 1 confirms it.** Candidates:
-   save-on-completion only when the slot goes idle for N seconds (not per
-   turn), or on prompt switch/shutdown only; incremental checkpoint saves;
-   never let the store run at its quota ceiling during measurement
-   (size the quota with headroom so compaction is not inside the window).
-3. **Run the multi-level config on M4:** `--cache-ram` sized realistically
-   for the host (start at 4–8 GiB on the 24 GiB M4 with the 8B model),
-   `--cache-ssd` with headroom above the working set, on corpus v2b
-   extended to all available sessions of that project (18 exist — use more
-   restart boundaries than three). Pre-register the definition as v2c
-   before running. Baseline arm: cache fully disabled. Optional third arm:
-   RAM-only (`--cache-ssd 0`) — this isolates what SSD adds over the RAM
-   tier, which is the actual product question.
-4. **Metrics for Gate G1c (pre-register, continuous not binary):**
-   per-turn paired ratio on every turn, bucketed by `cache_n`; post-restart
-   first-turn `cache_n` as a fraction of shared-preamble length; total
-   session wall-clock per arm. GO if the SSD arm beats the RAM-only arm on
-   cold-start turns and is not net slower than RAM-only elsewhere.
-   If SSD adds nothing over RAM-only on this host, that is the earned
-   NO_GO — and it is also the finding that the win is in the RAM tier and
-   the ladder should optimize that instead.
-
-### Historical: Phase 1 (pre-trigger-patch) root cause
-
-The Phase 1 run (`artifacts/ssd-redesign/20260901T152546Z-4c0f7eab23ef/RUN_SUMMARY.md`)
-was executed honestly and its measurements stand: 0 bytes ever reached the
-SSD store for solo-developer `--parallel 1` traffic. But its verdict was
-premature. Independent code review found that the run conflated two
-different facts:
-
-- **What it proved:** the current implementation cannot *write* to the
-  persistent tier for this traffic shape. There are two `prompt_save` call
-  sites, not one: the idle-sibling-slot loop
-  (`tools/server/server-context.cpp` ~2591, multi-slot only) and the
-  prompt-switch path in `get_available_slot` (~1817, fires on LRU selection
-  or LCP `f_keep < 0.5`). With one growing conversation per server process,
-  neither fires. Nothing flushes on request completion or shutdown, and the
-  SSD tier only receives RAM-demoted entries
-  (`server-task.cpp`, `server_prompt_cache::update`, ~2100).
-- **What it did not prove:** that representative traffic lacks persistent
-  reuse. Its own data shows reuse potential (byte-identical preambles,
-  83% within-process LCP continuity). The cache had nothing to serve
-  because nothing was ever saved — a trigger gap, not absent demand.
-
-Therefore the decisive question of Gate G1 remains **open**, and the block
-is a small, well-localized patch away from testable.
-
-## Proven scope and results
-
-- Native RAM plus optional SSD L2 prompt/KV caching is implemented.
-- SSD L2 remains disabled by default.
-- The caller-attested synthetic M4 exact-reuse ratio is `4.9897x`.
-- The caller-attested synthetic M4 partial-reuse ratio is `1.5825x`.
-- Exact and partial qualification outputs and generated token IDs matched.
-- Novel input establishes only no detected latency difference.
-- Pressure proves bounded capacity, eviction, and restart for the four-prefix probe.
-- Pressure does not prove output or generated-token equality.
-- The compatibility key remains caller-attested, not caller-derived.
-- Learning-write overhead: closed by the Phase 1 run (no reproducible net
-  cost beyond noise once the tier has nothing to write).
-- Solo `--parallel 1` traffic: automatic save-to-persistent-tier never
-  engages with the current triggers (see Gate G1 status above).
-
-## Claim and execution boundary
-
-- Do not generalize synthetic results to representative owner traffic.
-- Do not claim universal speedup, production economics, or default enablement.
-- Do not repeat unchanged qualification, novel, learning, or pressure experiments.
+  Their kill gates, thresholds, proxy-capture and owner-holdout rules bind
+  ONLY that line and must not be imported.
+- Upstream `AGENTS.md`/`CONTRIBUTING.md` files inside any `third_party/`
+  fork describe rules for upstream PRs; private forks are exempt. Commits to
+  a fork submodule inside this repository are ordinary in-scope work and
+  need no per-action approval: commit in the submodule, push its branch to
+  the fork, regenerate the mirrored patch series, commit the gitlink here.
+- This repository has no separate "commit policy": in-scope commits and
+  pushes that advance the plan are allowed without asking.
 
 ## Goal invariant (does not change)
 
-Deliver honest, receipt-backed evidence of whether persistent SSD L2 caching
-produces real value on representative owner traffic — and, if it does,
-maximize that value through receipt-gated iteration. The evidence bar never
-drops: raw receipts, explicit claim boundaries, paired controls where a cost
-is claimed, no synthetic-to-representative generalization. A clean,
-receipt-backed negative result satisfies the goal; an unsupported positive
-claim does not.
+Deliver honest, receipt-backed evidence of whether a persistent SSD tier
+under mlx-lm's RAM prompt cache produces real value on the owner's
+representative traffic — and, if it does, maximize that value through
+receipt-gated iteration. The evidence bar never drops: raw receipts,
+explicit claim boundaries, paired controls where a cost is claimed, no
+synthetic-to-representative generalization, no post-hoc workload selection.
+A clean, receipt-backed negative result satisfies the goal; an unsupported
+positive claim does not.
 
-## Ordered next plan (gated)
+## What carries over from the llama.cpp line (reuse, do not rebuild)
+
+- **Owner-trace corpus pipeline**: the v2/v2b builders and the frozen
+  workload definitions under
+  `artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/`
+  (`corpus-v2b/`, `PHASE0_WORKLOAD_DEFINITION_V2B.md`, `phase1b2_run.py`,
+  `phase1b2_analyze.py`). Requests are already chat-shaped (system preamble
+  + growing transcript); they map onto mlx-lm's `/v1/chat/completions`.
+- **Paired benchmark method**: baseline vs treatment arms, same request
+  bodies, per-turn wall-clock, bootstrap intervals, receipts with model /
+  engine / host hashes. Only the HTTP adapter changes: the reused-prefix
+  metric is `usage.prompt_tokens_details.cached_tokens` instead of
+  `cache_n`.
+- **Findings** listed in `docs/MLX_CACHE.md` (trigger coverage, write
+  amplification, restore-cost scaling, quota headroom, continuous metrics).
+- **Owner-trace data rules** (below) and the **execution host rule**
+  (below) — unchanged.
+
+## Repository layout for the MLX line
+
+- `third_party/mlx-lm` — submodule tracking the owner's private fork
+  `liqlos/mlx-lm` (`main` = upstream release tag + our commits). Created in
+  Phase M0. Same fork workflow as `third_party/llama.cpp`; mirrored patch
+  series under `native/mlx-patches/`.
+- `src/pcss/` — the laboratory (Python). New MLX-specific harness code goes
+  here next to the existing modules; do not fork the lab.
+- `artifacts/mlx/<run-id>/` — run roots for the MLX line.
+- `third_party/llama.cpp`, `native/patches/`, `docs/SSD_L2_CACHE.md` —
+  frozen llama.cpp line.
+
+## Ordered plan (gated)
+
+### Phase M0 — Stand up the MLX lab (no product code yet)
+
+1. Create the private fork `liqlos/mlx-lm` from `ml-explore/mlx-lm` at the
+   latest release tag (`v0.31.3` as of 2026-04-22; check for newer), add it
+   as `third_party/mlx-lm`, pin the tag in `third_party/mlx-lm.PIN`, and
+   set up `native/mlx-patches/` + a `scripts/mlx-build.sh` that installs the
+   fork editable into the venv and verifies checkout == PIN + series
+   (mirror `scripts/build.sh`).
+2. Verify the toolchain on the M4 host: `mlx`, `mlx-lm` versions,
+   `mlx-community/Qwen3-8B-4bit` present (it is), `mlx_lm.server` starts,
+   `cached_tokens` appears in responses.
+3. Write the mlx-lm HTTP adapter for the lab: OpenAI chat endpoint, capture
+   `cached_tokens`, `prompt_tokens`, wall-clock, generated token IDs.
+4. **Baseline receipt (upstream as-is, RAM tier only)** on corpus v2b
+   extended to all 18 `oculusprojects` sessions, pre-registered as
+   `PHASE0_WORKLOAD_DEFINITION_MLX_V1.md` before running, on the M4 host:
+   arms = cache disabled (`--prompt-cache-size 0` or equivalent) vs upstream
+   RAM cache with a realistic `--prompt-cache-bytes` (start at 4 GiB on the
+   24 GiB host with the 8B 4-bit model). Record per-turn paired ratios
+   bucketed by `cached_tokens`, within-process hit profile, post-restart
+   first-turn `cached_tokens` (expected 0 — that is the gap), RAM usage.
+   This is the reference every later arm is compared against.
+
+Gate M0: adapter works, receipts validate, baseline recorded in
+`docs/MLX_CACHE.md`. No product decision here.
+
+### Phase M1 — Persistent disk tier MVP
+
+Implement in the fork, as small increments that each stand alone (they are
+the future upstream PR series):
+
+1. **Flush on shutdown / load on start**: serialize every RAM entry via
+   `save_prompt_cache` into a store directory with an index
+   (token sequence → file, model key, mlx / mlx-lm version, system
+   fingerprint, checksum); rebuild the RAM cache from the index on start.
+   Compatibility key derived from those fields, fail-closed on mismatch.
+2. **Demote on eviction**: when `LRUPromptCache` evicts under its
+   count/bytes limits, write the entry to the disk tier asynchronously
+   instead of discarding it. Disk tier has its own byte quota with LRU and
+   headroom (never measure at the ceiling).
+3. **Disk lookup on RAM miss**: extend `fetch_nearest_cache` so that a RAM
+   miss (or a shorter RAM prefix than the disk has) consults the disk
+   index with the same exact / longer-trim / shorter semantics, loads via
+   `load_prompt_cache`, and promotes the entry back to RAM.
+4. CLI: `--prompt-cache-dir`, `--prompt-cache-disk-bytes`; disabled by
+   default; all three semantics logged.
+
+Gate G1-MLX (pre-register metrics before the run, on the M4 host, same
+frozen workload as M0): arms = cache disabled / RAM-only / RAM+disk, long-
+lived server with real restarts between sessions. GO if the RAM+disk arm
+beats RAM-only on post-restart cold turns and is not net slower elsewhere,
+on continuous per-turn paired ratios. If disk adds nothing over RAM-only
+with a working write path and adequate restart boundaries: earned NO_GO;
+record it, keep the feature disabled by default, and stop the line.
+
+### Phase M2 — Profit ladder (only after GO at G1-MLX)
+
+One lever at a time: hypothesis → paired experiment → receipt →
+keep-or-discard, journaling continuously. Suggested order:
+
+1. **Quantized disk entries**: store demoted caches as `QuantizedKVCache`
+   (4-bit) — ~4x less disk and read; measure restore cost and output
+   parity separately.
+2. **Segment-level entries**: persist `system` and `user` segment caches
+   (mlx-lm already distinguishes them) so a shared preamble is one small
+   hot entry rather than part of every conversation's tail.
+3. **Prefetch**: start loading the disk candidate while the request is
+   still being tokenized / queued; overlap disk read with prefill of the
+   remainder.
+4. **Tier budgets**: RAM/disk size sweep — hit rate and latency vs budget
+   curve, not a single point.
+5. **Admission / recency policy** across restarts; multi-project stores.
+6. **Restore path**: lazy per-layer load, mmap-friendly layout, only if
+   the cost decomposition says restore dominates.
+
+Stop condition (loop-until-dry): the ladder ends when two consecutive
+levers each fail to produce a receipt-backed improvement, or when a lever's
+cost provably exceeds its benefit. Record the cumulative paired result in
+`docs/MLX_CACHE.md`.
+
+### Phase M3 — Upstream (owner-driven, after M1/M2 receipts)
+
+Open an issue on `ml-explore/mlx-lm` describing the persistence gap with
+receipts; then the M1 increments as separate PRs in order. The owner writes
+the issue and PR text and must be able to defend every line; agents prepare
+material only.
 
 ## Owner-trace corpus (authorized data source)
 
 The owner has explicitly authorized using their real local agent-session
-histories as workload data for this project: Claude Code session transcripts
-(under `~/.claude/projects/`, JSONL) and Codex session logs (under
-`~/.codex/`). Rules:
+histories as workload data: Claude Code session transcripts (under
+`~/.claude/projects/`, JSONL) and Codex session logs (under `~/.codex/`).
 
-- **Privacy boundary:** this data never leaves the owner's own machines
-  (local M1 for processing is fine; the M4 host is the owner's). Never
-  upload it, publish it, or embed excerpts in documents — receipts reference
-  the corpus by manifest hash, not by content.
-- **Processing:** transcripts must be converted into replayable request
-  sequences (system preamble + growing transcript + tool results), preserving
-  the real prefix-repetition structure. The Phase 1b corpus pipeline
-  (`artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/`,
-  corpus v2/v2b builders) is the current implementation — extend it. The
-  older PCSS capture harness (`src/pcss/project_workload_capture.py`,
-  `PROJECT_NATURALISTIC_CAPTURE.md`) is historical prior art only; its
-  proxy-receipt and holdout rules do not apply here.
-- **Pre-registration, not post-hoc:** a trace-derived workload is a new,
-  versioned Phase 0 definition (`PHASE0_WORKLOAD_DEFINITION v2`), frozen
-  with corpus manifest and selection criteria BEFORE any measured run.
-  Selecting or trimming traces after seeing results is prohibited — that is
-  the "redefining the workload to manufacture a positive" failure mode.
-- Heterogeneous traffic is expected and is the point: the corpus should mix
-  projects and session shapes. Getting profit despite heterogeneity is what
-  the profit ladder's granularity/policy levers are for.
-
-### Phase 1b — Close the trigger gap, then rerun the decisive experiment
-
-1. Implement a save trigger that works for single-slot sequential traffic.
-   Candidate designs (pick by evidence, combining is allowed):
-   - save-on-completion: flush the slot's state into the prompt cache when
-     a completion request finishes (with debouncing so a growing
-     conversation does not rewrite the store on every turn);
-   - save-on-shutdown: flush live slot state on graceful server exit;
-   - periodic idle flush.
-   Both existing call sites and the demotion path are located above — this
-   is a localized patch to the already-patched server, and it is also the
-   concrete upstream-contribution artifact.
-2. Rerun the Phase 1 representative experiment against the patched trigger,
-   using either the existing frozen Phase 0 definition or a pre-registered
-   owner-trace v2 definition (preferred if the corpus pipeline is ready;
-   see "Owner-trace corpus" above). This is a legitimate new hypothesis
-   under the two-strike rule: the code changed, the design did not.
-
-### Gate G1b — superseded by Phase 1c / Gate G1c (see top of file)
-
-Phase 1b ran and is complete; its verdict was reached under a forced
-single-tier config and is superseded. Gate G1c (defined in Phase 1c above)
-is the live gate:
-
-- SSD arm beats RAM-only on cold-start turns and is not net slower
-  elsewhere: `GO_PROFIT_LADDER` — proceed to Phase 3.
-- SSD adds nothing over a realistic RAM tier on this host, with write
-  amplification fixed and adequate restart boundaries: `NO_GO_SSD_L2_PRODUCT`
-  earned — package the trigger patch and receipts for upstream; then decide
-  whether the RAM tier itself is the product to optimize.
-
-### Phase 3 — Profit ladder (only after `GO_PROFIT_LADDER`)
-
-Do not stop at the first confirmed win. Iterate levers one at a time, each
-as hypothesis → paired experiment → receipt → keep-or-discard, journaling
-continuously. Suggested ladder order (reorder freely with rationale):
-
-1. Trigger tuning: debounce interval, checkpoint granularity/frequency for
-   partial-prefix reuse depth — including dynamic/adaptive granularity
-   (checkpoint density driven by observed reuse patterns rather than a
-   fixed interval), which is the main lever for heterogeneous traffic.
-2. Tier budgets: RAM/SSD size sweep on the representative workload
-   (hit rate and latency vs budget curve, not a single point).
-3. Admission and recency policy: what to demote, what to keep hot,
-   restart-persistent recency.
-4. Write-path cost: async writes, compaction thresholds, store layout.
-5. Workload extensions: multi-project stores, multiple compatibility
-   namespaces, warm-start after reboot.
-6. Hardening from the old plan as it becomes load-bearing: caller-derived
-   fail-closed compatibility identity; larger-cardinality pressure with raw
-   output and token receipts.
-
-**Stop condition (loop-until-dry):** the ladder ends when two consecutive
-levers each fail to produce a receipt-backed improvement on the
-representative workload, or when a lever's cost provably exceeds its
-benefit. Record the final cumulative paired result in
-`docs/SSD_L2_CACHE.md`.
+- **Privacy boundary:** this data never leaves the owner's own machines.
+  Never upload it, publish it, or embed excerpts in documents — receipts
+  reference corpora by manifest hash, not by content.
+- **Pre-registration, not post-hoc:** a trace-derived workload is a
+  versioned, frozen definition with corpus manifest and selection criteria
+  written BEFORE any measured run. Selecting or trimming traces after
+  seeing results is prohibited.
+- Heterogeneous traffic is expected and is the point.
 
 ## Execution host rule (binding)
 
-All live server runs, benchmarks, qualification, pressure, and profit-ladder
-experiments run on the dedicated Apple M4 Pro host (24 GiB), reachable as
-`ai-server@mac2-llm.local` — the same host as the canonical receipts in
-`docs/SSD_L2_CACHE.md`. The local M1 Pro machine is NOT a measurement host:
-it is memory-constrained and shared with unrelated development. Use it only
-for code edits, unit tests, and lint. A measurement produced on any other
-hardware is invalid as gate evidence (the first Phase 1 run made exactly
-this mistake and its latency numbers are host-confounded). Every receipt
-must record the hardware it ran on.
+All live server runs, benchmarks, and experiments run on the dedicated
+Apple M4 Pro host (24 GiB), `ai-server@mac2-llm.local`. The local M1 Pro is
+NOT a measurement host — memory-constrained and shared with unrelated
+development — use it only for code edits, unit tests, lint, and data
+processing. A measurement on any other hardware is invalid as gate
+evidence. Every receipt records the host, `mlx` and `mlx-lm` versions, and
+the server's `system_fingerprint`.
 
 ## Anti-stall rules (binding on the executing agent)
 
-- **Two-strike loop-breaker.** If the same experiment design fails or stalls
-  twice without a new hypothesis, do not run it a third time. Either change
-  the design under a written new hypothesis, or record the blocker in the
-  run journal and move to the next runnable item. A code change to the
-  mechanism under test counts as a new hypothesis, and so does a tier
-  configuration change that alters which mechanism is being measured
-  (single-tier forced-disk vs multi-level RAM+SSD are different mechanisms);
-  a bare rerun or a different sample of the same corpus does not.
-- **Measure the product, not a proxy.** Experiment configs chosen to
-  "guarantee the tier is exercised" (e.g. `--cache-ram 1`) are diagnostics,
-  never gate evidence. Gate runs use the configuration a real deployment
-  would use on the recorded host.
-- **Approach freedom within the evidence bar.** The agent is authorized to
-  substitute an alternative experimental design, harness, or measurement
-  approach for any planned item without asking, provided the Goal invariant
-  holds and the substitution is recorded with its rationale. The plan binds
-  the questions and the gate order, not the specific mechanism of answering.
-- **Negative results are progress.** A receipt-backed NO-GO or blocker is a
-  completed deliverable. Do not keep iterating in search of a positive
-  result — but a confirmed positive result is also not a finish line while
-  the profit ladder has untested levers (see stop condition).
-- **Timebox before pivot.** If a planned item consumes a full session
-  without producing either a receipt or a concrete blocker, stop, journal
-  the state honestly, and pivot to the cheapest design that can still
-  answer the same question.
-- **No silent scope changes.** Reordering within a phase and substituting
-  designs are allowed; skipping a gate, entering Phase 3 without
-  `GO_PROFIT_LADDER`, or redefining the Phase 0 workload to manufacture a
-  positive is not.
-- **Continuous journaling.** Long runs must append progress to the run
-  journal as they go (per lever: hypothesis, receipt path, verdict), so any
-  interruption leaves a resumable state.
+- **Two-strike loop-breaker.** The same experiment design may fail or
+  stall twice; a third run needs a written new hypothesis. A code change to
+  the mechanism under test, or a tier-configuration change that alters
+  which mechanism is measured, is a new hypothesis; a bare rerun or a
+  different sample of the same corpus is not.
+- **Measure the product, not a proxy.** Configs chosen to "guarantee the
+  tier is exercised" are diagnostics, never gate evidence. Gate runs use a
+  configuration a real deployment would use on the recorded host.
+- **Approach freedom within the evidence bar.** Substitute designs,
+  harnesses, or measurement approaches freely with a recorded rationale;
+  the plan binds the questions and the gate order, not the mechanism of
+  answering.
+- **Negative results are progress.** A receipt-backed NO_GO or blocker is a
+  completed deliverable; a confirmed positive is not a finish line while
+  the ladder has untested levers.
+- **Timebox before pivot.** A planned item that consumes a full session
+  without a receipt or a concrete blocker gets journaled honestly and
+  replaced by the cheapest design that still answers the same question.
+- **No silent scope changes.** Skipping a gate, entering M2 without GO, or
+  redefining the workload to manufacture a positive is prohibited.
+- **Continuous journaling.** Append progress to the run journal as you go
+  (per item: hypothesis, receipt path, verdict) so any interruption leaves a
+  resumable state.
 
 ## Explicitly parked (do not start)
 
-A performance rewrite of the store/server path (e.g. in Rust) is parked
-until the profit ladder has proven where the time actually goes on
-representative traffic. Optimizing before that evidence exists is premature.
-
-The sequence datastore remains `NO_GO_CURRENT_REDESIGN`. Reopening it
-requires a written new hypothesis that addresses serial-canonical K>2
-correctness AND the storage-projection failure — absent that, do not touch
-it. Historical PCSS documents do not define or authorize next work.
+- Rewriting the store or server in another language (e.g. Rust): parked
+  until the profit ladder shows where the time goes.
+- The sequence datastore (cross-prompt, non-prefix reuse): remains
+  `NO_GO_CURRENT_REDESIGN`. Reopening requires a written new hypothesis
+  addressing serial-canonical K>2 correctness AND the storage-projection
+  failure.
+- The llama.cpp line: frozen (see Strategic decision).

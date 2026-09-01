@@ -1,4 +1,10 @@
-# Native RAM + SSD L2 prompt/KV cache
+# Native RAM + SSD L2 prompt/KV cache (llama.cpp line — FROZEN)
+
+> **FROZEN LINE (2026-09-01):** the project moved to MLX / mlx-lm; see
+> `NOW.md` (plan) and `docs/MLX_CACHE.md` (current MLX state). This file
+> remains the authority for what the llama.cpp line established and for its
+> receipts, and is the source of the transferable findings listed in
+> `docs/MLX_CACHE.md`. It is not an instruction to continue this line.
 
 ## Status and claim boundary
 
