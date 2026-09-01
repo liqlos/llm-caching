@@ -14,23 +14,30 @@ plan here wins and the doc gets reconciled.
   capture and owner-holdout rules, and "do not retry" clauses bind ONLY that
   historical line. They are not evidence standards for SSD L2 work and must
   not be imported into it.
-- `third_party/llama.cpp` is a private pinned fork. Its `AGENTS.md` /
-  `CLAUDE.md` describe rules for contributing to upstream llama.cpp; by its
-  own text private forks are exempt. Commits to the submodule inside this
-  repository are ordinary in-scope work under this repository's rules and
-  need no per-action approval. The upstream rules apply only when an actual
-  upstream PR is being prepared, and that step is always owner-driven.
+- `third_party/llama.cpp` is the owner's private fork
+  `https://github.com/liqlos/llama.cpp` (branch `main`; remote `origin`
+  in the submodule, with `upstream` = `ggml-org/llama.cpp`). Its
+  `AGENTS.md` / `CLAUDE.md` describe rules for contributing to upstream
+  llama.cpp; by its own text private forks are exempt. Commits to the
+  submodule are ordinary in-scope work under this repository's rules and
+  need no per-action approval — commit in the submodule, push its `main`
+  to `origin`, then commit the updated gitlink here. The upstream rules
+  apply only when an actual upstream PR is being prepared, and that step is
+  always owner-driven.
 - This repository has no separate "commit policy" beyond the owner's
   standing instructions: in-scope commits that advance the plan are allowed.
-- **Native source reproducibility.** The submodule commits on top of the
-  upstream PIN (`third_party/llama.cpp.PIN`) exist only in the local
-  checkouts (M1 and M4); `.gitmodules` points at upstream, so a fresh clone
-  cannot fetch them. The reproducible route is the PIN revision plus
-  `native/patches/*.patch`, which `scripts/build.sh` applies (and skips when
-  the checkout already contains them). Whenever the submodule gains a
-  commit, regenerate the series with
-  `git -C third_party/llama.cpp format-patch <PIN>..HEAD` and verify it
-  applies cleanly on the PIN before committing.
+- **Native source reproducibility.** The product source is the private
+  fork's `main`: upstream PIN revision (`third_party/llama.cpp.PIN`) plus
+  the cache commits. `git submodule update --init` on a fresh clone fetches
+  it from the fork. `native/patches/*.patch` mirrors the same commits so a
+  build can also be reproduced from the bare upstream PIN; `scripts/build.sh`
+  verifies that the checkout equals PIN + series and refuses anything else.
+  Whenever the submodule gains a commit, push it to the fork AND regenerate
+  the series (`git -C third_party/llama.cpp format-patch <PIN>..HEAD`),
+  verify it applies cleanly on the PIN, and commit both together.
+  On the M4 host, sync with `git pull && git submodule update --init` (the
+  submodule's `origin` there may still point at upstream — run
+  `git submodule sync` first).
 
 ## Gate status: `G1b_NO_GO_UNDER_FORCED_DISK_CONFIG` → Phase 1c required
 

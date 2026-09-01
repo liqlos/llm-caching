@@ -6,7 +6,20 @@ It is enabled only when a nonzero capacity, an absolute store path, and a
 caller-attested compatibility key are supplied together.
 
 The sole current-state authority for behavior, receipts, qualification claims,
-and limitations is [docs/SSD_L2_CACHE.md](docs/SSD_L2_CACHE.md).
+and limitations is [docs/SSD_L2_CACHE.md](docs/SSD_L2_CACHE.md). The plan,
+gates, and execution rules are in [NOW.md](NOW.md).
+
+## Layout
+
+- `third_party/llama.cpp` — the product. A submodule tracking the private
+  fork `liqlos/llama.cpp` (`main`), which is upstream llama.cpp at the pinned
+  revision plus the RAM+SSD prompt-cache commits. The patched `llama-server`
+  is what gets measured and shipped.
+- `native/patches/` — the same commits as a patch series, so the build is
+  reproducible from the bare upstream pin (`scripts/build.sh` verifies this).
+- `src/pcss/`, `tests/`, `scripts/`, `qualification/`, `artifacts/` — the
+  laboratory around the product: benchmark harnesses, owner-trace corpora,
+  receipts, and historical PCSS evidence. No product code lives here.
 
 ## Runtime controls
 
