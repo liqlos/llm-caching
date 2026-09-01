@@ -4,7 +4,12 @@ This is the sole current-state authority for the MLX line: what exists
 upstream, what this project has built on top, what has been measured, and
 the claim boundary. The plan and execution rules live in `NOW.md`.
 
-## Upstream baseline (mlx-lm v0.31.3, 2026-04-22; verified against `main` on 2026-09-01)
+## Upstream baseline (`ml-explore/mlx-lm` `main`, read on 2026-09-01)
+
+Upstream is active: commits land daily on `main` (six on 2026-09-01), but
+PyPI releases are cut only every month or two (last: v0.31.3, 2026-04-22).
+The description below is of `main`; the PyPI package can lag it by months,
+which is why the project pins a `main` SHA and installs from the fork.
 
 `mlx_lm.server` already has an in-memory RAM prompt-cache tier:
 

@@ -83,14 +83,21 @@ positive claim does not.
 ### Phase M0 — Stand up the MLX lab (no product code yet)
 
 1. Create the private fork `liqlos/mlx-lm` from `ml-explore/mlx-lm` at the
-   latest release tag (`v0.31.3` as of 2026-04-22; check for newer), add it
-   as `third_party/mlx-lm`, pin the tag in `third_party/mlx-lm.PIN`, and
+   **current `main` SHA** (not the last PyPI release: upstream tags
+   releases every month or two while `main` moves daily — 66 commits since
+   May 2026, six on 2026-09-01 alone; the `LRUPromptCache` described in
+   `docs/MLX_CACHE.md` is `main` code). Add it as `third_party/mlx-lm`,
+   record that SHA plus the upstream URL in `third_party/mlx-lm.PIN`, and
    set up `native/mlx-patches/` + a `scripts/mlx-build.sh` that installs the
-   fork editable into the venv and verifies checkout == PIN + series
-   (mirror `scripts/build.sh`).
-2. Verify the toolchain on the M4 host: `mlx`, `mlx-lm` versions,
-   `mlx-community/Qwen3-8B-4bit` present (it is), `mlx_lm.server` starts,
-   `cached_tokens` appears in responses.
+   fork editable into the venv (`pip install -e third_party/mlx-lm`) and
+   verifies checkout == PIN + series (mirror `scripts/build.sh`). Bumping
+   the PIN to a newer upstream SHA is allowed any time our commits rebase
+   cleanly; record the bump in the run journal.
+2. Verify the toolchain on the M4 host: `mlx` at its latest release
+   (v0.32.x), `mlx-lm` installed **from the fork, not PyPI** (the PyPI
+   0.31.3 there is four months behind `main`), `mlx-community/Qwen3-8B-4bit`
+   present (it is), `mlx_lm.server` starts, `cached_tokens` appears in
+   responses.
 3. Write the mlx-lm HTTP adapter for the lab: OpenAI chat endpoint, capture
    `cached_tokens`, `prompt_tokens`, wall-clock, generated token IDs.
 4. **Baseline receipt (upstream as-is, RAM tier only)** on corpus v2b
