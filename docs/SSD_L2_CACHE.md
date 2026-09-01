@@ -14,6 +14,45 @@ This is not evidence for representative owner-workload economics. It is also
 not a sequence-datastore approval: that design remains
 `NO_GO_CURRENT_REDESIGN`.
 
+## Phase 1 representative-workload verdict: `NO_GO_SSD_L2_PRODUCT`
+
+A representative multi-session workload (real repository bytes, a
+byte-identical system preamble, growing per-session transcripts, real
+server restarts between sessions, `--parallel 1` matching a solo
+developer's sequential usage) was run twice on Apple M1 Pro. Full receipts:
+`artifacts/ssd-redesign/20260901T152546Z-4c0f7eab23ef/RUN_SUMMARY.md`.
+
+- **The persistent SSD tier never engaged in either attempt**: 0 files, 0
+  bytes written to the disk store, 0 eviction/disk-write log lines, across
+  both a generous (`--cache-ram 512`) and a minimal (`--cache-ram 1`) RAM
+  budget.
+- **Root cause (source-confirmed, not a tuning issue)**: the only call site
+  that pushes a slot's state into the prompt-cache system
+  (`slot.prompt_save`, gated by `--cache-idle-slots`) runs inside a loop over
+  *other, currently idle* slots, right after a task launches on a different
+  slot. With `--parallel 1` there is exactly one slot, it is never idle at
+  that check, and the save-to-cache path structurally never fires — for any
+  `--cache-ram` value. This is a multi-slot mechanism: it persists a
+  conversation that goes idle while a different one becomes active on
+  another slot. It does not persist a single sequential session across a
+  restart.
+- This does not contradict the exact/partial qualification receipts below:
+  those drove each request through a **separate, fresh server process**,
+  which hits a different code path (initial slot load) than the idle-slot
+  handoff this run needed. It narrows what those receipts cover: single
+  fresh-process exact-repeat lookups, not sustained multi-session
+  solo-developer persistence.
+- The learning-write overhead question below ("a clean learning-overhead
+  component was not identified") is now answered: paired population-pass
+  measurements in both attempts show no reproducible net cost beyond noise
+  once the feature has nothing to write, consistent with the disk tier
+  never engaging.
+
+Per `NOW.md` Gate G1, Phase 2 (hardening) is **not** entered. SSD L2 remains
+a qualified, disabled-by-default feature; an upstream llama.cpp contribution
+is the evaluated exit path, and the idle-slot-only save trigger above is the
+concrete, actionable gap for that path.
+
 ## CLI configuration
 
 Configure all three SSD options together:
@@ -147,3 +186,6 @@ Both final receipts identify:
   provenance, but they are not current authority for SSD L2 qualification.
 - Positive SSD L2 results do not reverse the sequence-datastore verdict:
   `NO_GO_CURRENT_REDESIGN`.
+- The representative-workload question this synthetic evidence explicitly
+  left open is now closed, negatively: see "Phase 1 representative-workload
+  verdict" above. `NO_GO_SSD_L2_PRODUCT`.
