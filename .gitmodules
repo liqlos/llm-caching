@@ -2,3 +2,7 @@
 	path = third_party/llama.cpp
 	url = https://github.com/liqlos/llama.cpp.git
 	branch = main
+[submodule "third_party/mlx-lm"]
+	path = third_party/mlx-lm
+	url = https://github.com/liqlos/mlx-lm.git
+	branch = main
