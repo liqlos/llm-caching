@@ -20,16 +20,16 @@ This is not evidence for representative owner-workload economics. It is also
 not a sequence-datastore approval: that design remains
 `NO_GO_CURRENT_REDESIGN`.
 
-## Representative-workload status: Phase 1b `NO_GO` is PROVISIONAL, superseded by Phase 1c
+## Representative-workload status: Phase 1b `NO_GO` is PROVISIONAL; the line froze before the planned Phase 1c
 
 The Phase 1b `NO_GO_SSD_L2_PRODUCT` verdict recorded below was reached under
 a forced single-tier configuration (`--cache-ram 1`, no RAM tier, store at
 its quota ceiling). It measured an SSD-only cache with per-turn full-state
 writes, not the multi-level RAM+SSD product. It stands as a receipt for that
-configuration only. The live gate is G1c, defined in `NOW.md` (Phase 1c),
-which measures the multi-level configuration on owner traffic with the write
-amplification addressed. Until G1c is recorded here, no product-level
-NO_GO or GO is in force. What Phase 1b did establish, and what stands:
+configuration only. A Phase 1c (multi-level RAM+SSD arms on owner traffic
+with write amplification fixed) was planned but never run: the project moved
+to MLX first. No product-level NO_GO or GO is in force for this line. What
+Phase 1b did establish, and what stands:
 
 - the single-slot save trigger patch works (write path verified);
 - the owner-trace corpus pipeline works (v2, v2b);
@@ -131,10 +131,9 @@ large `cache_n` is therefore attributable to that write/restore path under
 a degenerate config until a cost decomposition says otherwise. Full detail:
 `RUN_SUMMARY.md`'s "Diagnostic finding" section.
 
-**Gate G1b verdict: `NO_GO` for the forced single-tier configuration only;
-superseded by Gate G1c** (see the status section at the top of this file and
-`NOW.md` Phase 1c). The multi-level RAM+SSD product configuration has not
-yet been measured on owner traffic. The trigger patch and both corpora's
+**Gate G1b verdict: `NO_GO` for the forced single-tier configuration only**
+(see the status section at the top of this file). The multi-level RAM+SSD
+product configuration was never measured on owner traffic in this line. The trigger patch and both corpora's
 receipts remain valid evidence for an upstream llama.cpp contribution
 regardless of the eventual product verdict.
 
@@ -274,5 +273,6 @@ Both final receipts identify:
 - The representative-workload question this synthetic evidence left open is
   still open at the product level: the write-path trigger gap has been
   patched and the forced single-tier config measured (provisional `NO_GO`
-  for that config); the multi-level configuration is measured by Phase 1c /
-  Gate G1c per `NOW.md`.
+  for that config); the multi-level configuration was never measured here.
+  The question is carried forward by the MLX line (`NOW.md`,
+  `docs/MLX_CACHE.md`).
