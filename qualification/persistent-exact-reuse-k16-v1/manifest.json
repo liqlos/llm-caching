@@ -1,0 +1,181 @@
+{
+  "allowed_policy_families": [
+    "ordinary-target-decoding",
+    "upstream-ngram-cache",
+    "persistent-exact-pcss-without-current-context"
+  ],
+  "arm_order": [
+    "upstream-ngram-cache",
+    "pcss-cache",
+    "baseline"
+  ],
+  "arm_store_initialization": {
+    "baseline": {
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "pcss-cache": {
+      "initialization": "fresh process with empty persistent-only PCSS store",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "upstream-ngram-cache": {
+      "initialization": "fresh process with empty in-memory ngram cache",
+      "snapshot_sha256": null,
+      "state": "cold"
+    }
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "disable_current_context": true,
+        "disable_learning": false,
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "max_disk_gib": 1,
+        "max_draft_tokens": 16,
+        "namespace": "persistent-exact-reuse-k16-v1",
+        "ram_mib": 16,
+        "read_only": false
+      }
+    }
+  ],
+  "budgets": {
+    "max_artifact_bytes": 52428800,
+    "max_requests": 18,
+    "max_wall_clock_seconds": 600
+  },
+  "calibration_split": {
+    "request_ids": [
+      "clamp-first",
+      "clamp-repeat",
+      "json-first",
+      "json-repeat",
+      "typescript-first",
+      "typescript-repeat"
+    ],
+    "tuning_permitted": true
+  },
+  "claim_boundary": "Experimental production K16 exact-reuse capability measurement on the fixed Qwen3-8B M4 target; not representative traffic or a transferable speedup claim.",
+  "clustering": {
+    "method": "source-edit family",
+    "request_cluster_ids": {
+      "clamp-first": "clamp",
+      "clamp-repeat": "clamp",
+      "json-first": "json",
+      "json-repeat": "json",
+      "typescript-first": "typescript",
+      "typescript-repeat": "typescript"
+    }
+  },
+  "counterbalance": {
+    "method": "latin_square",
+    "sequence_id": "row-2"
+  },
+  "effect_gates": {
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_required": true,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster"
+  },
+  "eligibility_rules": [
+    "dispatch every frozen request once per arm in chronological order",
+    "request bodies contain prompts only and no expected or future output",
+    "retain every request including misses, rejected drafts, failures, and outliers"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure and timeout in raw samples"
+  ],
+  "finite_parameter_grids": {
+    "draft_tokens": [
+      16
+    ],
+    "lookup_bytes": [
+      262144
+    ],
+    "lookup_probes": [
+      256
+    ],
+    "prefix_tokens": [
+      64
+    ]
+  },
+  "frozen": true,
+  "git_revision": "84982163c7500ed321c470d2fd7e8f1f36664bc2",
+  "hardware_os": {
+    "hardware": "Apple M4 Pro, 24 GB unified memory",
+    "os": "macOS arm64 on mac2-llm"
+  },
+  "holdout": false,
+  "holdout_split": {
+    "one_shot": false,
+    "request_ids": []
+  },
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "exact output mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "patch_sha256": "28a758f15da5eb976ec0a39fe59f25c477099c67c77be88e1ec7cbd0a2019597",
+  "readiness": {
+    "interval_seconds": 0.25,
+    "max_attempts": 120,
+    "path": "/health",
+    "timeout_seconds": 30
+  },
+  "request_count": 6,
+  "request_defaults": {
+    "max_tokens": 96,
+    "seed": 123,
+    "stream": true,
+    "temperature": 0
+  },
+  "request_timeout_seconds": 30,
+  "resource_ceilings": {
+    "compaction_write_amplification_max": 2,
+    "disk_gib": 1,
+    "ram_mib": 8192,
+    "startup_seconds": 30
+  },
+  "runtime_fingerprint": "7164b228e1a283160afa40b2db0b9e1b636c7d3ce7ba6183fc81e2c50512c42f",
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "server_sha256": "216a507ebf0ebac56de3c816564ca4dca689fd21002d1fa980741e8e42320862",
+  "state_definitions": {
+    "cold": "fresh process and empty arm-owned state before the first request",
+    "warm": "same isolated live process after earlier chronological requests"
+  },
+  "stopping_rule": "stop after all three frozen arms consume the chronological proxy once or any correctness/resource kill gate fires",
+  "study_id": "persistent-exact-reuse-k16-v1",
+  "workload_class": "synthetic_control",
+  "workload_provenance": {
+    "capture_protocol": "pcss.synthetic-exact-reuse-calibration/v1",
+    "captured_before_arm_results": true,
+    "immutable": true,
+    "source": "pre-existing agent-authored source-completion fixture duplicated for exact persistent-reuse calibration"
+  },
+  "workload_sha256": "5c8841f0a07db153cc65b440c15f2c62b89e95061e0856379cf21bb56dfbcc38"
+}

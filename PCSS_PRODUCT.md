@@ -1,7 +1,15 @@
 # PCSS native product path
 
-The production executable is the pinned `third_party/llama.cpp` `llama-server`,
-not `native/pcss_llama_bridge`. The bridge remains an isolated verifier oracle.
+> **HISTORICAL / ARCHIVE-ONLY:** This entire file records evidence and decisions
+> from the 20260831 PCSS sequence line. Every product path, command, `current`,
+> `immutable`, `final`, default, and manifest requirement below is bounded to
+> that historical line and is never a current instruction or next action. Use
+> `docs/SSD_L2_CACHE.md` as the sole current-state authority and `NOW.md` for the
+> ordered continuation boundary.
+
+For the 20260831 sequence line, the product executable was the pinned
+`third_party/llama.cpp` `llama-server`, not `native/pcss_llama_bridge`. The
+bridge was an isolated verifier oracle.
 
 Build and run model-independent native checks:
 
@@ -16,25 +24,26 @@ export PCSS_MODEL=/absolute/path/to/model.gguf
 bash scripts/run_server.sh
 ```
 
-The server listens on port 8080 by default and uses a private store at
+The historical server listened on port 8080 by default and used a private store at
 `.pcss-store`. Set `PCSS_STORE`, `PCSS_NAMESPACE`, `PCSS_MAX_DISK_GIB`,
 `PCSS_RAM_MIB`, `PCSS_FINGERPRINT`, or `PCSS_PORT` to override them. The run
 script verifies the local model hash and binds the store to that artifact plus
-the declared template/thinking policy. The namespace is required and defaults
-to the current local OS uid; a server instance is a single-principal boundary.
+the declared template/thinking policy. The namespace was required and defaulted
+to the then-current local OS uid; a server instance was a single-principal boundary.
 Passing extra server options requires an explicit `PCSS_FINGERPRINT`. A missing,
 unreadable, or hash-mismatched model fails before startup; no downloader or
 system llama.cpp installation is used.
 
-Current terminal status: **IMPLEMENTED_NOT_QUALIFIED**. The native
-store/provider compile; the current Python suite has 313 passing tests; and
+Historical terminal status as of 2026-08-31: **IMPLEMENTED_NOT_QUALIFIED**. The native
+store/provider compiled; the then-current Python suite had 313 passing tests; and
 `bash scripts/native-check.sh` passes the Release store/provider test, store
 tool, and `llama-server` help contract against maintained patch SHA-256
 `9c7de25f952acab80197bb1581625d3ce696eb94cc9bd2208c35ed6127f28b6b`.
 Real-model API equality, cancellation, restart persistence, live metrics,
 concurrency, bounded context, failure fallback, and same-slot long-to-short
 equality are recorded locally. Representative comparative qualification is
-still absent, so persistent PCSS remains experimental and disabled by default.
+was still absent, so persistent PCSS was experimental and disabled by default
+for that sequence line.
 
 ## Architecture and numeric bounds
 
@@ -113,7 +122,7 @@ reported `draft_n: 28` and `draft_n_accepted: 10`; its store wrote a 245-byte
 `records.pcss` and a 32-byte `manifest.pcss`. Restarting the PCSS server with
 the same store produced the same deterministic response and draft counters.
 
-The current immutable local receipt is
+The 20260831 sequence line retained the immutable local receipt
 `artifacts/product-e2e/native-lifecycle-ba62a540/receipt.json` (ignored by Git,
 receipt SHA-256
 `64456c1964b627b1ec044e04050d3d18f67e7f4b138f4d26f35ac855c6540078`).
@@ -221,10 +230,10 @@ speedup, best-in-class, frontier, or default-enable claim.
 The v5/v6 source-to-edited-prompt calibration receipts are preserved negative
 evidence: no persistent hit occurred, so their timing cannot be attributed to
 PCSS reuse. V7 then tested exact reuse with an explicit eight-token draft cap;
-it produced one output mismatch and is invalid evidence. The final default is
-therefore `K=2`, the previously correctness-gated setting.
+it produced one output mismatch and is invalid evidence. The sequence-line
+default was therefore `K=2`, the previously correctness-gated setting.
 
-With that changed policy, immutable V8
+Under that historical policy, immutable V8
 `artifacts/benchmarks/persistent-exact-reuse-v8-ed3f4bc5/result.json` (SHA-256
 `0804a04bef786ad39ff2cd1daaa3fe4d7ed63ec416c9769ba329e4a74c5084f3`)
 passed raw correctness/resource cleanup. Its independent analysis (SHA-256
@@ -232,8 +241,10 @@ passed raw correctness/resource cleanup. Its independent analysis (SHA-256
 found baseline-over-PCSS 1.255, with clustered 95% interval `[1.222, 1.305]`.
 However, its frozen grid mistakenly still declared draft size 8 while the arm
 ran 2; the receipt is therefore preserved as raw calibration evidence only and
-its effect-gate verdict is not qualification evidence. A new manifest must pin
-`draft_tokens: [2]` before any K=2 performance conclusion. The prompts are
+its effect-gate verdict is not qualification evidence. The 20260831 line
+required a new manifest pinning `draft_tokens: [2]` before any K=2 performance
+conclusion; this is an unmet historical requirement, never a current action.
+The prompts are
 agent-authored calibration material in every case, so no result here alters the
 representative/default-enable boundary.
 
@@ -252,7 +263,7 @@ This is a workload-scoped no-go for this patch, K=2, prefix=64 and hybrid
 policy; it is not a general exact-PCSS technical limit. Upstream ngram is
 reporting-only because its own outputs diverged from greedy baseline.
 
-### Current-source synthetic capability result
+### Historical current-source synthetic capability result
 
 Before the comparative study, the fixed local lifecycle receipt
 `artifacts/product-e2e/current-source-20260831T075244Z.json` passed (SHA-256
@@ -262,8 +273,8 @@ cleanup after the request, isolated process cleanup, and absence of source
 material from server logs. This is lifecycle/privacy evidence only, not a
 performance result.
 
-The opt-in request-scoped `pcss_current_source` tier now has a valid live
-Qwen3-8B Q4_K_M synthetic capability receipt. Final study
+The opt-in request-scoped `pcss_current_source` tier then had a valid live
+Qwen3-8B Q4_K_M synthetic capability receipt. The sequence-line final study
 `synthetic-current-source-long-v4-9c7de25f` used exact 32-token anchors,
 K=2 target verification, a bounded 8 MiB source share of a 64 MiB PCSS budget,
 and 28 frozen source/mismatch/ambiguity/ordinary requests across three fresh

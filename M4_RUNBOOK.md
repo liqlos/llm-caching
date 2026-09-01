@@ -1,63 +1,41 @@
 # M4 verifier runbook — Qwen3-8B Q4_K_M
 
+> **HISTORICAL / ARCHIVE-ONLY:** The entire file records the 20260831 PCSS
+> sequence line. It is never a current instruction. For the current path and
+> claim boundary, use `docs/SSD_L2_CACHE.md` and `NOW.md`.
+
 This is the target correctness, isolated verifier-profile, controlled
 live-decode, and edit-protocol procedure for one fixed Qwen3-8B GGUF
 configuration. Live measurements below are bounded research harnesses, not a
 production decode integration or a general PCSS speedup claim.
 
-## Autonomous continuation policy
+## Historical autonomous continuation policy
 
-Work toward the requested research outcome, not completion of this procedure.
-A plan, document, commit, passing test suite, running process, run directory, or
-receipt is evidence of progress, not the result itself. Completion requires the
-explicitly requested outcome and its concrete acceptance checks. If those checks
-are not written, infer a one-sentence done condition from the request and current
-evidence before choosing work. The inferred condition must not narrow the
-requested outcome and must name observable implementation or measurement
-evidence. If a required target check is unavailable, report partial progress and
-the exact blocker; do not claim full completion. Choose the next action by how
-directly it removes the main uncertainty or produces the requested result.
+During the 20260831 PCSS sequence line, the policy treated plans, commits,
+tests, processes, run directories, and receipts as progress rather than the
+requested result. Completion depended on observable acceptance evidence.
 
-A kill gate in this runbook stops only the current command sequence, immutable
-run, implementation path, or evidence claim named by that gate. It is not a
-terminal condition for the research session or the original objective. After a
-gate fires, preserve the receipt and inputs, diagnose the causal failure, and
-continue with the next safe step that changes the method or input: local
-inspection, a focused regression test, a causal implementation correction, or
-a separately committed revision with a fresh run root. Never repeat an
-unchanged failed experiment merely to seek a passing result.
+The historical policy scoped each kill gate to its named command, run, path, or
+claim; preserved failed receipts; changed method or input before any retry; and
+accepted negative experiments without converting them into broader completion.
+It allowed reversible in-scope work and reserved owner confirmation for new
+authority, protected resources, secrets, materially different objectives, or
+destructive/external actions.
 
-Keep process proportional to the risk. Add a schema, checklist, review stage,
-document, abstraction, or new harness only when it protects a concrete evidence
-boundary, prevents a known failure, or is needed to judge the requested result.
-Apply each gate only to the run, path, action, or claim it explicitly names. If
-its scope is omitted, preserve the evidence, block only the unsafe target action,
-and continue reversible local work toward the original objective.
+This section records a then-active policy only. It is never a current autonomous
+continuation instruction and does not authorize any new run or implementation.
 
-Within the requested scope, reversible local investigation, implementation,
-and targeted validation do not require owner confirmation. Ask the owner only
-when progress requires new authority or input that cannot be inferred safely,
-such as spending money, using protected or unrelated resources, obtaining a
-secret, choosing between materially different objectives, or performing a
-destructive/external action. End the session only when the original objective
-and its acceptance checks are met. If a required check needs unavailable owner
-input or authority, report partial progress and name that check and dependency
-exactly. A negative experiment is an accepted result for that hypothesis, but it
-is not by itself completion of a broader research-and-implementation objective.
-
-## Current frontier
+## Historical PCSS frontier snapshot
 
 - **Unresolved outcome:** no representative edit workload has yet shown useful
   persistent cross-session PCSS candidates; the larger 12-pair edit corpus gave
   persistent history zero incremental credit, while the cross-repository result
   is explicitly a synthetic positive control.
-- **Next discriminating result:** measure a future-token-free persistent source
-  on a genuinely representative multi-session workload. Before reading its
-  outcome, record workload provenance and eligibility, exclude synthetic positive
-  controls and duplicated target prompts, and set a numeric offline coverage-cost
-  threshold from the bound target timings. Run that cheap offline check first;
-  perform target integration only if its clustered lower confidence bound clears
-  the recorded threshold.
+- **Historical next discriminating result:** the 20260831 PCSS line intended to
+  measure a future-token-free persistent source on a representative multi-session
+  workload, with preregistered provenance, eligibility, exclusions, and an
+  offline coverage-cost threshold before target integration. This preserved
+  result definition is never a current instruction or next-work authorization.
 - **Decision change:** require exact output/state and a lookup-inclusive,
   target-integrated clustered speed ratio whose lower confidence bound exceeds
   1.0. Otherwise record a workload-scoped no-go and move to the next in-scope

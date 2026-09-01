@@ -1651,14 +1651,14 @@ HandledResponse verify_pending(const Json::Object & request) {
     Context verifier = runtime.make_context();
     decode_prefix(verifier);
     const std::vector<std::uint8_t> prompt_state = snapshot_state(verifier);
-    std::vector<llama_token> verification_batch;
-    verification_batch.reserve(draft_tokens.size() + 1U);
-    verification_batch.push_back(anchor_token);
-    verification_batch.insert(verification_batch.end(), draft_tokens.begin(), draft_tokens.end());
-    decode_one_batch_with_all_logits(verifier, verification_batch, prefix_size);
     std::vector<llama_token> verification_target_tokens;
     verification_target_tokens.reserve(target_count);
-    for (std::size_t index = 0; index < verification_batch.size(); ++index) {
+    decode_tokens(verifier, std::vector<llama_token>{anchor_token}, prefix_size, true);
+    verification_target_tokens.push_back(greedy_argmax(verifier, runtime.vocabulary_size()));
+    if (!draft_tokens.empty()) {
+        decode_one_batch_with_all_logits(verifier, draft_tokens, prefix_size + 1U);
+    }
+    for (std::size_t index = 0; index < draft_tokens.size(); ++index) {
         verification_target_tokens.push_back(greedy_argmax_at(
             verifier,
             runtime.vocabulary_size(),
@@ -2019,10 +2019,26 @@ HandledResponse trajectory_pending(
                 );
             }
         }
-        const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
-        const bool tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
+        bool tail_trimmed = false;
+        if (k > 2U) {
+            restore_state(verifier, round_start_state);
+            decode_tokens(verifier, std::vector<llama_token>{pending_token}, committed_size, true);
+            for (std::size_t index = 0; index < accepted; ++index) {
+                decode_tokens(
+                    verifier,
+                    std::vector<llama_token>{target_tokens[index]},
+                    committed_size + 1U + index,
+                    true
+                );
+            }
+        } else {
+            const llama_pos trim_from = static_cast<llama_pos>(committed_size + 1U + accepted);
+            tail_trimmed = llama_memory_seq_rm(llama_get_memory(verifier.raw()), 0, trim_from, -1);
+        }
         if (!tail_trimmed) {
-            throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a pending trajectory tail");
+            if (k <= 2U) {
+                throw BridgeError("state_trim_unsupported", "llama.cpp cannot remove a pending trajectory tail");
+            }
         }
         const std::vector<std::uint8_t> verifier_state = snapshot_state(verifier);
         const std::vector<std::uint8_t> reference_state = snapshot_state(reference);

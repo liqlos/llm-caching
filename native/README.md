@@ -1,23 +1,29 @@
 # PCSS native components
 
-The product path is the pinned `third_party/llama.cpp` source plus the
-maintained patch series in `native/patches`. Build it with:
+> **HISTORICAL / ARCHIVE-ONLY:** This entire file records the 20260831 PCSS
+> sequence line. Its product path and commands are historical, not current
+> instructions. Use `docs/SSD_L2_CACHE.md` for the current path and claims, and
+> `NOW.md` for the ordered continuation boundary.
+
+The historical PCSS product path was the pinned `third_party/llama.cpp` source
+plus the then-maintained patch series in `native/patches`. Its historical build
+commands were:
 
 ~~~sh
 bash scripts/build.sh
 bash scripts/native-check.sh
 ~~~
 
-Launch the OpenAI-compatible product server with:
+Its historical OpenAI-compatible product-server launch command was:
 
 ~~~sh
 export PCSS_MODEL=/absolute/path/to/model.gguf
 bash scripts/run_server.sh
 ~~~
 
-This builds `llama-server` with `--spec-type pcss-cache` and the persistent
+For that historical line, this built `llama-server` with `--spec-type pcss-cache` and the persistent
 store controls. It never falls back to Homebrew or another system llama.cpp.
-See `PCSS_PRODUCT.md` for store configuration and current qualification status.
+See `PCSS_PRODUCT.md` for the historical PCSS qualification record.
 
 ## Legacy verifier bridge
 

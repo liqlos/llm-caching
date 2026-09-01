@@ -1,0 +1,212 @@
+{
+  "allowed_policy_families": [
+    "pcss.exact-suffix-ladder/v1",
+    "upstream-ngram-cache-k2-reporting-only"
+  ],
+  "arm_order": [
+    "baseline",
+    "pcss-cache",
+    "upstream-ngram-cache"
+  ],
+  "arm_store_initialization": {
+    "baseline": {
+      "initialization": "fresh process with speculation disabled",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "pcss-cache": {
+      "initialization": "fresh process with an empty isolated PCSS store",
+      "snapshot_sha256": null,
+      "state": "cold"
+    },
+    "upstream-ngram-cache": {
+      "initialization": "fresh process with empty in-memory upstream ngram cache",
+      "snapshot_sha256": null,
+      "state": "cold"
+    }
+  },
+  "arms": [
+    {
+      "name": "baseline"
+    },
+    {
+      "name": "upstream-ngram-cache"
+    },
+    {
+      "name": "pcss-cache",
+      "pcss": {
+        "disable_current_context": false,
+        "disable_learning": false,
+        "fingerprint": "sha256:d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785|template=server-default|thinking=server-default",
+        "max_disk_gib": 1,
+        "max_draft_tokens": 16,
+        "namespace": "synthetic-suffix-ladder-k16-v1",
+        "ram_mib": 16,
+        "read_only": false
+      }
+    }
+  ],
+  "budgets": {
+    "max_artifact_bytes": 104857600,
+    "max_requests": 36,
+    "max_wall_clock_seconds": 1800
+  },
+  "calibration_split": {
+    "request_ids": [
+      "kite-source",
+      "kite-short-edit",
+      "kite-miss",
+      "wren-source",
+      "wren-short-edit",
+      "wren-miss",
+      "lark-source",
+      "lark-short-edit",
+      "lark-miss",
+      "heron-source",
+      "heron-short-edit",
+      "heron-miss"
+    ],
+    "tuning_permitted": false
+  },
+  "claim_boundary": "Experimental production K16 structured suffix capability measurement on the fixed Qwen3-8B M4 target; synthetic calibration only.",
+  "clustering": {
+    "method": "predeclared three-request synthetic episode",
+    "request_cluster_ids": {
+      "heron-miss": "heron",
+      "heron-short-edit": "heron",
+      "heron-source": "heron",
+      "kite-miss": "kite",
+      "kite-short-edit": "kite",
+      "kite-source": "kite",
+      "lark-miss": "lark",
+      "lark-short-edit": "lark",
+      "lark-source": "lark",
+      "wren-miss": "wren",
+      "wren-short-edit": "wren",
+      "wren-source": "wren"
+    }
+  },
+  "counterbalance": {
+    "method": "single_preregistered_order",
+    "sequence_id": "baseline-pcss-upstream"
+  },
+  "effect_gates": {
+    "baseline_over_pcss_lcb95_min": 1.05,
+    "confidence_method": "clustered_bootstrap_lcb95",
+    "exact_output_arms": [
+      "pcss-cache"
+    ],
+    "exact_output_required": true,
+    "fallback_disable_events_max": 0,
+    "miss_heavy_p95_overhead_ucb95_max": 0.03,
+    "persistent_32_accepted_tokens_min": 4,
+    "persistent_32_hit_episodes_min": 4,
+    "persistent_32_hit_requests_min": 4,
+    "persistent_32_suppressions_max": 0,
+    "persistent_64_hit_requests_max": 0,
+    "primary_metric": "paired_end_to_end_latency",
+    "ratio_direction": "baseline_over_arm_gt_1_is_faster"
+  },
+  "eligibility_rules": [
+    "all twelve frozen requests dispatch once per arm in chronological order",
+    "each source immediately precedes its one-token short-edit target in the same isolated PCSS arm",
+    "each third request is an unrelated frozen miss control",
+    "no request selection by answer, PCSS hit, latency, or output"
+  ],
+  "exclusion_rules": [
+    "exclude no request after arm results are visible",
+    "preserve every failure, timeout, miss, rejection, and outlier in raw samples"
+  ],
+  "finite_parameter_grids": {
+    "anchors_per_successful_request": [
+      16
+    ],
+    "continuation_tokens": [
+      16
+    ],
+    "draft_tokens": [
+      16
+    ],
+    "persistent_prefix_tokens": [
+      64,
+      32
+    ],
+    "short_prefix_rejection_breaker": [
+      3
+    ],
+    "upstream_ngram_draft_tokens": [
+      2
+    ]
+  },
+  "frozen": true,
+  "git_revision": "84982163c7500ed321c470d2fd7e8f1f36664bc2",
+  "hardware_os": {
+    "hardware": "Apple M4 Pro, 24 GB unified memory",
+    "os": "macOS arm64 on mac2-llm"
+  },
+  "holdout": false,
+  "holdout_split": {
+    "one_shot": false,
+    "request_ids": []
+  },
+  "kill_gates": [
+    "server crash or nonzero exit",
+    "request timeout or malformed OpenAI response",
+    "baseline-versus-PCSS exact output mismatch",
+    "policy metric binding mismatch",
+    "RAM, disk, startup, wall-clock, request, or artifact ceiling breach",
+    "swap thrashing, thermal throttling, or system health degradation"
+  ],
+  "llama_cpp_revision": "9723942adc518b43c4b95dc4dce6906903eb5e09",
+  "model_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+  "patch_sha256": "28a758f15da5eb976ec0a39fe59f25c477099c67c77be88e1ec7cbd0a2019597",
+  "policy_id": "pcss.exact-suffix-ladder-k16/v1",
+  "policy_spec_sha256": "e7a53e31438d790c8bd38492c14e85df579b4f301b99e59601e8272e8a1e771d",
+  "readiness": {
+    "interval_seconds": 0.25,
+    "max_attempts": 120,
+    "path": "/health",
+    "timeout_seconds": 30
+  },
+  "request_count": 12,
+  "request_defaults": {
+    "max_tokens": 30,
+    "seed": 123,
+    "stream": true,
+    "temperature": 0
+  },
+  "request_timeout_seconds": 30,
+  "resource_ceilings": {
+    "compaction_write_amplification_max": 2,
+    "disk_gib": 1,
+    "ram_mib": 8192,
+    "startup_seconds": 30
+  },
+  "runtime_fingerprint": "11b86046ce6e751068a09360041fd3e8641762e84a2bd377536ee63dd55d4c7c",
+  "schema_version": "pcss.live-server-benchmark-manifest/v1",
+  "server_args": [
+    "--ctx-size",
+    "1024",
+    "--threads",
+    "4",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99"
+  ],
+  "server_sha256": "216a507ebf0ebac56de3c816564ca4dca689fd21002d1fa980741e8e42320862",
+  "state_definitions": {
+    "cold": "fresh process and empty arm-owned state before the first request",
+    "warm": "same isolated live process after earlier chronological requests"
+  },
+  "stopping_rule": "stop after all three frozen arms consume the twelve-request chronological synthetic workload once, or immediately at any correctness, attestation, resource, or system-health kill gate",
+  "study_id": "synthetic-suffix-ladder-k16-v1",
+  "workload_class": "synthetic_control",
+  "workload_provenance": {
+    "capture_protocol": "hand-authored-future-token-free-short-edit-control/v1",
+    "captured_before_arm_results": true,
+    "immutable": true,
+    "source": "hand-authored short-edit capability control; tokenizer preflight sha256:6d2f9073864512ab62e7a7a2c72ac27fee79044f3c0c482c1b27d4756d9ea526 proved each source/edit pair has a shared final 31-token prompt tail but different final 32- and 64-token prompt tails"
+  },
+  "workload_sha256": "c69becf0b53b55f83ac70576e76176296deb44fdcb243f327f3ccdd11a952ece"
+}
