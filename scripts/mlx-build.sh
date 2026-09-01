@@ -10,7 +10,7 @@ patch_root="$root/native/mlx-patches"
 pin_revision="$(sed -n 's/^revision=//p' "$root/third_party/mlx-lm.PIN")"
 venv_root="${PCSS_MLX_VENV:-$root/.venv-mlx}"
 
-test -f "$source_root/pyproject.toml" || {
+test -f "$source_root/setup.py" || {
   echo "missing pinned mlx-lm submodule; run: git submodule update --init --recursive" >&2
   exit 2
 }
