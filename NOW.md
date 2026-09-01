@@ -1,7 +1,36 @@
 # SSD L2 current handoff
 
-`docs/SSD_L2_CACHE.md` is the sole current-state authority.
-All other PCSS and sequence documents are historical evidence only.
+`docs/SSD_L2_CACHE.md` is the sole current-state authority for behavior,
+receipts, and recorded verdicts; `NOW.md` is the sole authority for the
+plan, gates, and execution rules. If the two disagree on gate status, the
+plan here wins and the doc gets reconciled.
+
+## Reading order and what does NOT bind
+
+- Read `NOW.md`, then `docs/SSD_L2_CACHE.md`. Nothing else is required.
+- `PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `native/README.md`, and everything
+  under `qualification/` are the historical PCSS / sequence-datastore line.
+  Their kill gates, acceptance thresholds (e.g. `LCB95 >= 1.05`), proxy
+  capture and owner-holdout rules, and "do not retry" clauses bind ONLY that
+  historical line. They are not evidence standards for SSD L2 work and must
+  not be imported into it.
+- `third_party/llama.cpp` is a private pinned fork. Its `AGENTS.md` /
+  `CLAUDE.md` describe rules for contributing to upstream llama.cpp; by its
+  own text private forks are exempt. Commits to the submodule inside this
+  repository are ordinary in-scope work under this repository's rules and
+  need no per-action approval. The upstream rules apply only when an actual
+  upstream PR is being prepared, and that step is always owner-driven.
+- This repository has no separate "commit policy" beyond the owner's
+  standing instructions: in-scope commits that advance the plan are allowed.
+- **Native source reproducibility.** The submodule commits on top of the
+  upstream PIN (`third_party/llama.cpp.PIN`) exist only in the local
+  checkouts (M1 and M4); `.gitmodules` points at upstream, so a fresh clone
+  cannot fetch them. The reproducible route is the PIN revision plus
+  `native/patches/*.patch`, which `scripts/build.sh` applies (and skips when
+  the checkout already contains them). Whenever the submodule gains a
+  commit, regenerate the series with
+  `git -C third_party/llama.cpp format-patch <PIN>..HEAD` and verify it
+  applies cleanly on the PIN before committing.
 
 ## Gate status: `G1b_NO_GO_UNDER_FORCED_DISK_CONFIG` → Phase 1c required
 
@@ -35,7 +64,9 @@ placement (granularity), not at absent reuse.
 
 ### Phase 1c — Measure the actual product: multi-level RAM+SSD on owner traffic
 
-Precondition: owner approval to commit the trigger patch (see Status).
+First action: commit the trigger patch in `third_party/llama.cpp` and the
+pending `NOW.md` / `docs/SSD_L2_CACHE.md` changes (see "Reading order" — no
+per-action approval is needed for submodule commits in this repo).
 
 1. **Decompose the hit-turn cost first, from data already collected.**
    Server logs carry `prompt cache update took … ms` and eviction/disk
@@ -138,10 +169,12 @@ histories as workload data for this project: Claude Code session transcripts
   the corpus by manifest hash, not by content.
 - **Processing:** transcripts must be converted into replayable request
   sequences (system preamble + growing transcript + tool results), preserving
-  the real prefix-repetition structure. The existing capture/replay harness
-  (`src/pcss/project_workload_capture.py`, `project_capture_proxy.py`,
-  `scripts/capture-project-proxy.sh`, `PROJECT_NATURALISTIC_CAPTURE.md`) is
-  prior art — reuse or supersede it with rationale.
+  the real prefix-repetition structure. The Phase 1b corpus pipeline
+  (`artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/`,
+  corpus v2/v2b builders) is the current implementation — extend it. The
+  older PCSS capture harness (`src/pcss/project_workload_capture.py`,
+  `PROJECT_NATURALISTIC_CAPTURE.md`) is historical prior art only; its
+  proxy-receipt and holdout rules do not apply here.
 - **Pre-registration, not post-hoc:** a trace-derived workload is a new,
   versioned Phase 0 definition (`PHASE0_WORKLOAD_DEFINITION v2`), frozen
   with corpus manifest and selection criteria BEFORE any measured run.

@@ -14,7 +14,22 @@ This is not evidence for representative owner-workload economics. It is also
 not a sequence-datastore approval: that design remains
 `NO_GO_CURRENT_REDESIGN`.
 
-## Phase 1 / 1b representative-workload verdict: `NO_GO_SSD_L2_PRODUCT` (genuinely earned)
+## Representative-workload status: Phase 1b `NO_GO` is PROVISIONAL, superseded by Phase 1c
+
+The Phase 1b `NO_GO_SSD_L2_PRODUCT` verdict recorded below was reached under
+a forced single-tier configuration (`--cache-ram 1`, no RAM tier, store at
+its quota ceiling). It measured an SSD-only cache with per-turn full-state
+writes, not the multi-level RAM+SSD product. It stands as a receipt for that
+configuration only. The live gate is G1c, defined in `NOW.md` (Phase 1c),
+which measures the multi-level configuration on owner traffic with the write
+amplification addressed. Until G1c is recorded here, no product-level
+NO_GO or GO is in force. What Phase 1b did establish, and what stands:
+
+- the single-slot save trigger patch works (write path verified);
+- the owner-trace corpus pipeline works (v2, v2b);
+- on hit turns with reused prefix under ~4,000 tokens, the SSD arm was
+  1.05x-1.3x faster than baseline in both corpora - the first real-traffic
+  benefit measured in this project.
 
 ### Phase 1 — the write path structurally never fired
 
@@ -28,13 +43,14 @@ developer's sequential usage) was run twice on Apple M1 Pro. Full receipts:
   bytes written to the disk store, 0 eviction/disk-write log lines, across
   both a generous (`--cache-ram 512`) and a minimal (`--cache-ram 1`) RAM
   budget.
-- **Root cause (source-confirmed, not a tuning issue)**: the only call site
-  that pushed a slot's state into the prompt-cache system
-  (`slot.prompt_save`, gated by `--cache-idle-slots`) ran inside a loop over
-  *other, currently idle* slots, right after a task launches on a different
-  slot. With `--parallel 1` there is exactly one slot, it is never idle at
-  that check, and the save-to-cache path structurally never fired — for any
-  `--cache-ram` value. This was a multi-slot mechanism: it persisted a
+- **Root cause (source-confirmed, not a tuning issue)**: neither pre-patch
+  `prompt_save` call site fires for this traffic. The idle-sibling-slot loop
+  (gated by `--cache-idle-slots`) runs over *other, currently idle* slots
+  right after a task launches on a different slot; with `--parallel 1` the
+  single slot is never idle at that check. The prompt-switch path in
+  `get_available_slot` fires only on LRU selection or LCP `f_keep < 0.5`,
+  which a single growing conversation per process never triggers. So the
+  save-to-cache path structurally never fired — for any `--cache-ram` value. This was a multi-slot mechanism: it persisted a
   conversation that goes idle while a different one became active on
   another slot. It did not persist a single sequential session across a
   restart.
@@ -50,7 +66,7 @@ developer's sequential usage) was run twice on Apple M1 Pro. Full receipts:
   once the feature had nothing to write, consistent with the disk tier
   never engaging.
 
-### Phase 1b — trigger patch closes the write path; still `NO_GO`
+### Phase 1b — trigger patch closes the write path; `NO_GO` under forced single-tier config (provisional)
 
 Full receipts: `artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/RUN_SUMMARY.md`.
 
@@ -99,22 +115,22 @@ shows a clean, monotonic pattern reproduced independently in both corpora —
 genuinely faster under SSD at small `cache_n` (< 1,500 tokens, ratio
 1.07-1.28x), inverting to ~1.7-1.8x *slower* by `cache_n` 8,000-15,000.
 `ssd_s` grows disproportionately with `cache_n` while `baseline_s` tracks
-`tokens_evaluated` as expected — the disk-tier restore path itself does not
-scale here. Both decisive runs used a deliberately minimal `--cache-ram 1`
-(to guarantee disk-tier engagement per Phase 1's own lesson), which also
-means every restore paid the full disk round-trip with no RAM shortcut; a
-realistic RAM budget might change this economics, but testing that is a
-Phase 3 "tier budgets" lever, out of scope without `GO_PROFIT_LADDER`. Full
-detail: `RUN_SUMMARY.md`'s "Diagnostic finding" section.
+`tokens_evaluated` as expected. Both decisive runs used a deliberately
+minimal `--cache-ram 1` (to guarantee disk-tier engagement), which means
+every restore paid the full disk round-trip with no RAM tier, every
+completion save was demoted to disk immediately (a growing conversation
+rewrites its full state each turn), and the v2b store sat at its 4096 MiB
+quota ceiling with compaction inside the measured window. The slowdown at
+large `cache_n` is therefore attributable to that write/restore path under
+a degenerate config until a cost decomposition says otherwise. Full detail:
+`RUN_SUMMARY.md`'s "Diagnostic finding" section.
 
-**Gate G1b verdict: `NO_GO_SSD_L2_PRODUCT`, now genuinely earned** (the
-write path works; the persisted state, when actually reused across a
-restart, does not pay for itself). Per `NOW.md`, Phase 3 (profit ladder) is
-**not** entered — it is gated on `GO_PROFIT_LADDER`. SSD L2 remains a
-qualified, disabled-by-default feature; the trigger patch and both corpora's
-receipts are the evaluated evidence for an upstream llama.cpp contribution
-(the trigger-gap fix itself, offered as a correctness improvement
-independent of this product's own go/no-go).
+**Gate G1b verdict: `NO_GO` for the forced single-tier configuration only;
+superseded by Gate G1c** (see the status section at the top of this file and
+`NOW.md` Phase 1c). The multi-level RAM+SSD product configuration has not
+yet been measured on owner traffic. The trigger patch and both corpora's
+receipts remain valid evidence for an upstream llama.cpp contribution
+regardless of the eventual product verdict.
 
 ## CLI configuration
 
@@ -249,8 +265,8 @@ Both final receipts identify:
   provenance, but they are not current authority for SSD L2 qualification.
 - Positive SSD L2 results do not reverse the sequence-datastore verdict:
   `NO_GO_CURRENT_REDESIGN`.
-- The representative-workload question this synthetic evidence explicitly
-  left open is now closed, negatively, and the write-path trigger gap that
-  made the first attempt at closing it inconclusive has since been patched
-  and re-tested: see "Phase 1 / 1b representative-workload verdict" above.
-  `NO_GO_SSD_L2_PRODUCT`, genuinely earned as of Phase 1b.
+- The representative-workload question this synthetic evidence left open is
+  still open at the product level: the write-path trigger gap has been
+  patched and the forced single-tier config measured (provisional `NO_GO`
+  for that config); the multi-level configuration is measured by Phase 1c /
+  Gate G1c per `NOW.md`.
