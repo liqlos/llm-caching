@@ -14,7 +14,9 @@ This is not evidence for representative owner-workload economics. It is also
 not a sequence-datastore approval: that design remains
 `NO_GO_CURRENT_REDESIGN`.
 
-## Phase 1 representative-workload verdict: `NO_GO_SSD_L2_PRODUCT`
+## Phase 1 / 1b representative-workload verdict: `NO_GO_SSD_L2_PRODUCT` (genuinely earned)
+
+### Phase 1 — the write path structurally never fired
 
 A representative multi-session workload (real repository bytes, a
 byte-identical system preamble, growing per-session transcripts, real
@@ -27,31 +29,92 @@ developer's sequential usage) was run twice on Apple M1 Pro. Full receipts:
   both a generous (`--cache-ram 512`) and a minimal (`--cache-ram 1`) RAM
   budget.
 - **Root cause (source-confirmed, not a tuning issue)**: the only call site
-  that pushes a slot's state into the prompt-cache system
-  (`slot.prompt_save`, gated by `--cache-idle-slots`) runs inside a loop over
+  that pushed a slot's state into the prompt-cache system
+  (`slot.prompt_save`, gated by `--cache-idle-slots`) ran inside a loop over
   *other, currently idle* slots, right after a task launches on a different
   slot. With `--parallel 1` there is exactly one slot, it is never idle at
-  that check, and the save-to-cache path structurally never fires — for any
-  `--cache-ram` value. This is a multi-slot mechanism: it persists a
-  conversation that goes idle while a different one becomes active on
-  another slot. It does not persist a single sequential session across a
+  that check, and the save-to-cache path structurally never fired — for any
+  `--cache-ram` value. This was a multi-slot mechanism: it persisted a
+  conversation that goes idle while a different one became active on
+  another slot. It did not persist a single sequential session across a
   restart.
-- This does not contradict the exact/partial qualification receipts below:
+- This did not contradict the exact/partial qualification receipts below:
   those drove each request through a **separate, fresh server process**,
   which hits a different code path (initial slot load) than the idle-slot
   handoff this run needed. It narrows what those receipts cover: single
   fresh-process exact-repeat lookups, not sustained multi-session
   solo-developer persistence.
 - The learning-write overhead question below ("a clean learning-overhead
-  component was not identified") is now answered: paired population-pass
-  measurements in both attempts show no reproducible net cost beyond noise
-  once the feature has nothing to write, consistent with the disk tier
+  component was not identified") was answered here: paired population-pass
+  measurements in both attempts showed no reproducible net cost beyond noise
+  once the feature had nothing to write, consistent with the disk tier
   never engaging.
 
-Per `NOW.md` Gate G1, Phase 2 (hardening) is **not** entered. SSD L2 remains
-a qualified, disabled-by-default feature; an upstream llama.cpp contribution
-is the evaluated exit path, and the idle-slot-only save trigger above is the
-concrete, actionable gap for that path.
+### Phase 1b — trigger patch closes the write path; still `NO_GO`
+
+Full receipts: `artifacts/ssd-redesign/20260901T163602Z-phase1b-trigger-patch/RUN_SUMMARY.md`.
+
+A patch (uncommitted in the `third_party/llama.cpp` submodule, pending
+explicit user commit approval) added two new save triggers that fire for
+single-slot sequential traffic: `save_slot_on_completion` (debounced via a
+new `--cache-save-ms`, default 5000ms, gated by a new
+`--cache-save-on-completion`/`--no-cache-save-on-completion` flag, default
+on) fires when a completion finishes; `save_slots_on_shutdown` flushes every
+slot's current state on graceful `SIGTERM`, bypassing the debounce. Locally
+verified on the M1 (build + unit tests) per the execution-host rule.
+
+The decisive rerun, on the M4 host, against two independent real
+owner-trace corpora built from the owner's own local Claude Code session
+history (see "Owner-trace corpus" in `NOW.md`), confirms the write-path fix
+works and answers the reopened question, negatively:
+
+- **Corpus v2** (one session per project, 4 distinct projects): disk tier
+  engaged (3,666,303,328 bytes written, 151 eviction/disk log lines — the
+  write gap is genuinely closed). But **0 of 3** restart boundaries showed
+  a first-turn-after-restart cache hit (the unconfounded persistence
+  signal — see the run's analyzer for why the naive 96% aggregate hit rate
+  is not usable evidence, being saturated by llama.cpp's pre-existing
+  same-slot continuity, present regardless of `--cache-ram`/`--cache-ssd`).
+  Root cause: sampling unrelated projects per session leaves no real shared
+  content across a restart boundary beyond a short constructed preamble.
+- **Corpus v2b** (4 chronological sessions from a single project, the
+  structurally correct test of "resuming the same project after a
+  restart"): disk tier engaged (4,097,953,872 bytes, 124 eviction/disk log
+  lines). **1 of 3** restart boundaries showed a genuine
+  first-turn-after-restart hit — real evidence the mechanism can work for
+  continuing-project traffic. But paired wall-clock on the hits that did
+  occur was net negative for the SSD arm (mean ratio baseline/ssd = 0.866,
+  95% CI [0.785, 0.947], excluding 1.0).
+
+Both pre-registered Gate G1b conditions (persistent hit rate materially
+nonzero AND paired wall-clock benefit real) must hold for `GO_PROFIT_LADDER`;
+neither corpus cleared both. Per NOW.md's two-strike anti-stall rule, these
+are two materially different corpus designs (not a bare rerun), each
+addressing a named confound in the one before it — a third variant without a
+new mechanism-level hypothesis is not a legitimate next iteration.
+
+**Diagnostic finding (post-hoc analysis of already-collected data, does not
+reopen the gate):** bucketing hit turns by reused-prefix size (`cache_n`)
+shows a clean, monotonic pattern reproduced independently in both corpora —
+genuinely faster under SSD at small `cache_n` (< 1,500 tokens, ratio
+1.07-1.28x), inverting to ~1.7-1.8x *slower* by `cache_n` 8,000-15,000.
+`ssd_s` grows disproportionately with `cache_n` while `baseline_s` tracks
+`tokens_evaluated` as expected — the disk-tier restore path itself does not
+scale here. Both decisive runs used a deliberately minimal `--cache-ram 1`
+(to guarantee disk-tier engagement per Phase 1's own lesson), which also
+means every restore paid the full disk round-trip with no RAM shortcut; a
+realistic RAM budget might change this economics, but testing that is a
+Phase 3 "tier budgets" lever, out of scope without `GO_PROFIT_LADDER`. Full
+detail: `RUN_SUMMARY.md`'s "Diagnostic finding" section.
+
+**Gate G1b verdict: `NO_GO_SSD_L2_PRODUCT`, now genuinely earned** (the
+write path works; the persisted state, when actually reused across a
+restart, does not pay for itself). Per `NOW.md`, Phase 3 (profit ladder) is
+**not** entered — it is gated on `GO_PROFIT_LADDER`. SSD L2 remains a
+qualified, disabled-by-default feature; the trigger patch and both corpora's
+receipts are the evaluated evidence for an upstream llama.cpp contribution
+(the trigger-gap fix itself, offered as a correctness improvement
+independent of this product's own go/no-go).
 
 ## CLI configuration
 
@@ -187,5 +250,7 @@ Both final receipts identify:
 - Positive SSD L2 results do not reverse the sequence-datastore verdict:
   `NO_GO_CURRENT_REDESIGN`.
 - The representative-workload question this synthetic evidence explicitly
-  left open is now closed, negatively: see "Phase 1 representative-workload
-  verdict" above. `NO_GO_SSD_L2_PRODUCT`.
+  left open is now closed, negatively, and the write-path trigger gap that
+  made the first attempt at closing it inconclusive has since been patched
+  and re-tested: see "Phase 1 / 1b representative-workload verdict" above.
+  `NO_GO_SSD_L2_PRODUCT`, genuinely earned as of Phase 1b.
