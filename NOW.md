@@ -11,8 +11,21 @@ prior art and binds nothing.
 D0b (arm 1, `Qwen3-8B-8bit`) is running on M4, background, ETA several hours — do not
 wait on it or restart it; check `artifacts/mlx/20260902T152845Z-phase-d0-marathon/
 JOURNAL.md` (local-only, not in git) for the live state and every detail below. While it
-runs: `run_d0b.py` gained `--resume` and `--reuse-prompt-cache` (for the second arm,
-`Qwen3.8-27B-4bit` — not applied to the running arm). Phase D1's MVP (`GlobalDatastore`,
+runs: `run_d0b.py` gained `--resume` and `--reuse-prompt-cache`. **The arm was switched to
+that v2 script at 19:00** because v1 persisted only aggregate sums and never the generated
+token ids — six hours of GPU would have yielded one number under one (known-inert) scorer.
+v2 appends every turn's real `token_ids` to `<out>.turns.jsonl`, so **generation happens
+once and any scoring policy replays offline in seconds**; `--resume` makes a kill free and
+the file grows monotonically, so the gate can be answered against the first ~200 turns
+without waiting for 600. Highest-value next task while it runs: the offline replay tool
+that re-scores a/b/c from `turns.jsonl` under the current scorer, `datastore.py`'s fixed
+scorer, and a "per-request wins ties" variant. Early 60-turn partial (v1, known-bad
+scorer): global+per-request was byte-identical to global alone and **0.985x** of
+per-request alone at width 8 — i.e. the tie-break and the scoring, not the datastore's
+existence, decide this gate. Also measured: plain-greedy baseline on this host is
+~4.4 tok/s at ~8k context for `Qwen3-8B-8bit` (the memo's ~26 tok/s roofline is 3-5x
+optimistic; reconcile before quoting any ceiling), and prompt-cache reuse changed nothing
+because prefill is not the bottleneck. Phase D1's MVP (`GlobalDatastore`,
 the `E[accepted]+1 > c(width)` gate, per-round logging) landed on the fork
 (`liqlos/mlx-dspark`, submodule bumped) with 27 passing tests. A first exactness-gate run
 (rung 3 of the ladder, 0.5B model) found 1/12 checks diverging from plain greedy at
