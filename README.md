@@ -3,10 +3,11 @@
 Decode-side acceleration for local LLM serving on the owner's Apple
 Silicon machines: a persistent datastore of previously generated and seen
 token sequences proposes multi-token drafts during generation, which the
-target model verifies exactly in one forward pass. Output stays
-bit-identical; the model emits more tokens per weight pass. Built on MLX
-into the existing Apple Silicon speculation stack (mlx-dspark, then oMLX),
-measured on the owner's real agentic-coding traffic.
+target model verifies in one forward pass. Output is correct up to
+floating-point ties (see [NOW.md](NOW.md)'s Goal invariant); the model
+emits more tokens per weight pass. Built on MLX into the existing Apple
+Silicon speculation stack (mlx-dspark, then oMLX), measured on the owner's
+real agentic-coding traffic.
 
 Prefix / prefill KV caching is **out of scope**: oMLX already provides it
 for Apple Silicon. See [docs/CLOSED_LINES.md](docs/CLOSED_LINES.md) for

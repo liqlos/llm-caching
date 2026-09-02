@@ -58,9 +58,10 @@ roofline should be read as 29 tok/s at 512 context and 23 at 8k.
 
 **What this project builds:** decode-side acceleration by speculating from
 a **persistent, cross-session datastore of previously generated and seen
-token sequences** ("computed token sequences saved to SSD"), verified
-exactly by the target model. Output is bit-identical to plain decoding.
-Engine: MLX on the owner's Macs. Traffic: agentic coding.
+token sequences** ("computed token sequences saved to SSD"), verified by
+the target model. Output is correct up to floating-point ties (see Goal
+invariant below; the earlier "bit-identical" framing was retracted
+2026-09-03). Engine: MLX on the owner's Macs. Traffic: agentic coding.
 
 ## Research memos (read before designing or measuring anything)
 
@@ -105,8 +106,9 @@ mlx-serve, lookup-spec-metal, ngram-engine) is per-request only.
   n-gram drafting (`src/mlx_dspark/lookup.py`, ~280 lines): trigram+
   suffix match against the *current* prompt + generation, hybridised with
   DFlash by default, match-scaled long drafts up to 32 tokens, measured
-  4.5x on copy-heavy code editing (Gemma-12B, 75 tok/s) with bit-identical
-  output. It is **per-request only**: the index dies with the request.
+  4.5x on copy-heavy code editing (Gemma-12B, 75 tok/s); mlx-dspark's own
+  contract for this is "greedy up to fp ties," not bit-identical (see Goal
+  invariant). It is **per-request only**: the index dies with the request.
 - **Serving:** mlx-dspark serves OpenAI-compatible with prefix caching and
   a Mac app; oMLX serves OpenAI + Anthropic with the SSD prefix cache and
   consumes mlx-vlm's speculative stack (drafter kinds `dflash`, `mtp`,
