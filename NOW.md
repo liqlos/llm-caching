@@ -17,11 +17,29 @@ token sequences** ("computed token sequences saved to SSD"), verified
 exactly by the target model. Output is bit-identical to plain decoding.
 Engine: MLX on the owner's Macs. Traffic: agentic coding.
 
+## Research memos (read before designing or measuring anything)
+
+- `docs/research/PRIOR_ART_DATASTORE_SPECULATION.md` — who has what;
+  verdict: the niche is open.
+- `docs/research/DATASTORE_DESIGN_STUDY.md` — index structures,
+  persistence, draft policy, offline evaluation, logging schema.
+- `docs/research/APPLE_SILICON_VERIFY_ECONOMICS.md` — why verify cost is
+  what it is on M-series, per-target speedup ceilings, kernels to reuse.
+- `docs/research/REPO_AUDIT_2026-09-02.md` — the post-pivot cleanup record.
+
 ## Strategic position (research pass, 2026-09-02)
 
 The field confirms the idea and has already built most of the stack. What
 exists must be reused, not rebuilt; the one open gap is where this project
-lives.
+lives. Verified by the exhaustive prior-art search: **nobody, on any
+platform, ships a drafting datastore that is (a) fed by completed responses
+across requests, (b) serialized to disk and reloaded, and (c) composed
+with a model drafter.** vLLM's SuffixDecoding global tree lives only for
+the process (no serializer in `suffix_tree.h`); llama.cpp's 2024
+`examples/lookup` n-gram cache is the only persisted one and is unused
+(≤1.11x, and `llama-server` never saves it — `save_dynamic=false; // TODO`);
+every Apple Silicon lookup drafter (mlx-dspark, Rapid-MLX 3.6k★,
+mlx-serve, lookup-spec-metal, ngram-engine) is per-request only.
 
 **Already built on Apple Silicon (do not rebuild):**
 
@@ -60,21 +78,49 @@ Apache-2.0, no CUDA dependency in that directory) is reusable standalone.
 Nobody has this on Mac: `fmsouza/lookup-spec-metal` (0 stars) is at
 "offline acceptance, no decode loop" for per-request lookup only.
 
-**Apple Silicon economics that shape every decision:**
+**Apple Silicon economics that shape every decision** (details and
+sources in `APPLE_SILICON_VERIFY_ECONOMICS.md`):
 
-- Verification cost is *not* free: quantized Metal verify cost grows
-  ~linearly with draft width below ~8 (per-position matvec), plateaus at
-  width 16–32 at ~2.5x the cost of one step (mlx-dspark, M-series);
-  EAGLE-3 on MLX measured ~1 ms per extra verified token
-  (mlx-lm discussion #890). So drafts of "hundreds of tokens" do not pay
-  here; the useful window is ~8–32 tokens per round, and speedup comes
-  from *acceptance* inside that window, where a datastore is strongest on
-  repetitive text.
-- Small fast targets have no headroom: 8B-4bit at ~114 tok/s gave
-  EAGLE-3 1.05x; mlx-dspark reports minimal/negative gains under ~4B and
-  ratios peaking at 8-bit, not 4-bit (MLX matmul cost cliff). **Target
-  the model the owner will actually run for agentic coding; on a 24 GiB
-  M4 Pro the candidates are 8B-8bit or 27B-4bit, not 8B-4bit.**
+- The linear verify curve is a **kernel-dispatch artifact, not hardware**:
+  below MLX's `qmv` batch limit (13 rows on M3/M4/M5, 6 on M1/M2) the
+  quantized matmul re-reads and re-dequantizes the whole weight matrix per
+  input row. Physics says a 4-bit model on an M4 Pro should verify ~6
+  tokens for the price of one and an 8-bit model ~12 before compute takes
+  over; stock MLX 0.32.2 is 2.5–3.5x off that in exactly the 2..12 window.
+  A reusable fix exists (`small_m_qmm.py` in mlx-dspark, MIT: widths 6–8
+  cost about width 5) but is not bit-identical (1–2 ulps); mlx-vlm's
+  per-family exact verifiers are bit-identical at linear cost. **This is a
+  fork in the road for a project promising bit-identical output — see Goal
+  invariant.**
+- A second cliff is in attention: MLX's vector SDPA path needs
+  `q_len ≤ 8` and `q_len × gqa ≤ 32`, so Qwen3.8-27B (gqa 6) falls off at
+  width 6 (2.9x per call at 32k context), and verify cost grows with
+  context depth. mlx-dspark's `sdpa_split.py` works around it. On 27B the
+  practical draft width is ~5 at long context unless that workaround is
+  adopted.
+- ANE and the CPU matrix units are prefill tools only (fixed shapes,
+  weight duplication, shared bus); they do not help verify at width 8–32.
+- **Per-target ceilings on the 24 GiB M4 Pro** (model, A = accepted
+  tokens per round): Qwen3-8B-8bit ~26 tok/s baseline, up to ~6.5x at
+  A=12 and ~8.4x at A=24 — the best ratio; Qwen3.8-27B-4bit ~14 tok/s,
+  ~4.5x ceiling, no benefit past width ~16 — the best quality; 8B-4bit
+  saturates near width 8; 27B-8bit and Qwen3.8-Flash-Next do not fit;
+  the 35B-A3B MoE is structurally poor (each extra draft token activates
+  new experts; A=3 is a wash). **M1 Pro is linear from width 2 and only
+  fits 8B/12B-4bit: it is not a speculation host.**
+- Plain-language: the method is model-agnostic; the gain is accepted
+  tokens per round ÷ round cost in decode steps, and the denominator
+  changes with bits/param and step length. 8-bit weights widen the free
+  verify window; short steps make fixed overheads dominate.
+- Measurement doctrine: benchmark dependent chains with rotated weights
+  per (chip × mlx version); independent-call microbenchmarks mispriced a
+  kernel by 1.13x vs −26%.
+- Cautions from the evidence: datastore drafting **regresses** on some
+  models/workloads (Rapid-MLX: 0.77x on JSONL, 0.86–0.95x on GPT-OSS /
+  Qwen3.6; thc1006: all-negative on an A3B MoE). A per-request acceptance
+  gate that turns drafting off when it does not pay is mandatory, not a
+  lever; and the gain must be shown on top of DFlash/MTP, never only
+  against plain decoding.
 - Frontier for later: AdaPLD (June 2026) adds semantic-similarity
   fallback when lexical retrieval fails (3.1x on code editing, +0.5%
   verify cost); SAM-Decoding (suffix automaton, O(1)/step).
@@ -95,6 +141,11 @@ drafter** on the owner's representative traffic, with bit-identical output
 (greedy: token identity; sampling: distribution-preserving). Evidence bar
 as before: raw receipts, pre-registration, paired arms, no post-hoc
 workload selection. A clean negative satisfies the goal.
+
+Exactness decision: gates are run on the **bit-identical** verify path
+(singleton-numerics exact verifiers). The non-identical small-M kernel is
+a D2 lever measured separately with a token-identity rate; it may be
+offered as an opt-in, never as the default the claims rest on.
 
 ## Open questions for the owner (answer before D1, not before D0)
 
@@ -143,22 +194,36 @@ if a per-project split shows a clearly profitable subset.
 ### Phase D1 — Global datastore drafter inside the existing stack
 
 Build **into `mlx-dspark`** (fork `liqlos/mlx-dspark`, MIT), not from
-scratch and not on mlx-lm:
+scratch and not on mlx-lm. Design per `DATASTORE_DESIGN_STUDY.md`:
 
-1. **Datastore:** global suffix tree over previous prompts + outputs with
-   frequency counts; persisted on disk (write-behind at idle, load on
-   start, per-project / per-tokenizer namespaces, byte quota + LRU by
-   sequence). Reuse ArcticInference's C++ tree via nanobind if it builds
-   cleanly on macOS; otherwise a minimal implementation. Persistence of
-   *the datastore* is where this project's disk expertise now applies.
-2. **Drafter:** extend `lookup.py`'s proposal step — consult the global
-   tree when the per-request index has no (or a shorter) match; keep its
-   hybrid with DFlash and its long-draft gate. Score candidates by
-   frequency (adaptive length α·match), cap at the measured verify
-   plateau.
-3. **Exactness gate (hard):** token identity vs plain greedy on every
+1. **Datastore:** ArcticInference's suffix tree (C++, nanobind,
+   Apache-2.0; ~4 µs/token update, ~12 µs lookup, native frequency
+   scoring and per-sequence removal) **kept entirely in RAM** under a byte
+   quota (1–4 GiB on the 24 GiB host; a single NVMe page fault costs a
+   whole round). Persistence = an append-only CRC'd token log per
+   (tokenizer, project) namespace, replayed on start (~40 s at 10^7
+   tokens), FIFO/LRU eviction by sequence, idle compaction; snapshot only
+   if replay is measured slow. Add the serializer the upstream tree lacks.
+   Bytes/token is workload-dependent (~10 B/token on repetitive output,
+   hundreds on high-entropy text) — D0a measures it per project and
+   `max_depth` is the main knob. No block storage: that concern was a
+   KV-cache leftover.
+2. **Drafter:** extend `lookup.py`'s proposal step. Every source
+   (per-request index, global tree, DFlash) is scored in *expected
+   accepted tokens*; draft only when `E[accepted] + 1 > c(width)` under
+   this host's measured verify curve; fill to the plateau; longest match /
+   recency as cold-start tie-break; α = 2, `min_token_prob` ≈ 0.1, cap 32
+   (cap ~5 on gqa-6 targets at long context until the SDPA workaround is
+   adopted). Linear drafts first; tree speculation only if logged
+   branching justifies it. Keep the hybrid with DFlash and the long-draft
+   gate.
+3. **Logging (from day one):** one row per round — source, match length,
+   predicted score, drafted, accepted, verify width, verify/draft ms,
+   gate state — plus per-request and per-process totals. Every tuning
+   knob in D2 is a function of these columns.
+4. **Exactness gate (hard):** token identity vs plain greedy on every
    corpus prompt at every width; any divergence stops the line.
-4. **Gate G1-D (pre-registered, M4, the D0 model):** paired decode
+5. **Gate G1-D (pre-registered, M4, the D0 model):** paired decode
    tokens/s, arms = plain / mlx-dspark auto (DFlash+per-request lookup,
    as shipped) / + global datastore, on the frozen corpus in session
    order with the global tree learned online. GO at ≥ 1.2x over the
@@ -236,4 +301,11 @@ idle on a run.
 - Building on mlx-lm's speculative loop: closed upstream, buggy — no.
 - Tree-attention verification in a custom engine: mlx-vlm already has it
   per family; reuse, do not write.
+- Writing matmul / attention kernels: reuse `small_m_qmm.py` and
+  `sdpa_split.py` from mlx-dspark or mlx-vlm's exact verifiers.
+- Block/page-layout storage for the datastore: not needed (in-RAM index,
+  append-only log); revisit only if history outgrows RAM (mmap'd suffix
+  array as a cold tier).
+- Rapid-MLX as a contribution target: no license, zero external PRs
+  merged; use as a measurement reference only.
 - Rewrites in another language: after receipts show where time goes.
