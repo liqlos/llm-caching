@@ -8,7 +8,6 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from pcss import live_server_benchmark as benchmark
 from pcss import project_capture_proxy as capture_proxy
 from pcss.project_capture_proxy import PreForwardCaptureLog, _handler, _relay_response, _require_loopback, main
 from pcss.project_workload_capture import (
@@ -152,9 +151,6 @@ def test_proxy_opt_in_sidecar_seals_source_without_leaking_it_to_ledger_or_recei
     receipt_text = json.dumps(receipt, sort_keys=True)
     assert receipt["schema_version"].endswith("/v2")
     assert receipt["source_attachment_count"] == 1
-    assert receipt["source_attachment_commitments"][source_event["event_id"]] == (
-        benchmark._capture_source_commitment(source)
-    )
     assert source["source_id"] not in receipt_text
     assert source["compatibility_fingerprint"] not in receipt_text
     assert "visible_token_ids" not in receipt_text

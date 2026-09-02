@@ -3,9 +3,9 @@ requires = ["setuptools>=69,<70"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pcss-foundation"
-version = "0.1.0"
-description = "Host-independent, falsification-first PCSS replay foundation"
+name = "llm-caching-lab"
+version = "0.2.0"
+description = "Laboratory for persistent cross-session datastore speculative decoding on Apple Silicon (corpus builders, offline replay, receipts)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []

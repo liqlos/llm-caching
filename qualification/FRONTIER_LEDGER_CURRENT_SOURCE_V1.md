@@ -1,5 +1,7 @@
 # PCSS current-source exact-anchor v1 frontier ledger
 
+> **HISTORICAL / ARCHIVE-ONLY:** This file belongs to the 2026-08 PCSS sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`). Its rules, gates, thresholds, budgets and stop rules bind nothing now. The current line is defined only by `NOW.md`.
+
 This is a new retrieval family after the frozen suffix-ladder study
 `synthetic-suffix-ladder-v1-2617641b`. It neither replaces that study nor
 reopens unsafe draft depth above K=2.

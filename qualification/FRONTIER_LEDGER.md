@@ -1,5 +1,7 @@
 # PCSS finite frontier ledger
 
+> **HISTORICAL / ARCHIVE-ONLY:** This file belongs to the 2026-08 PCSS sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`). Its rules, gates, thresholds, budgets and stop rules bind nothing now. The current line is defined only by `NOW.md`.
+
 This ledger is frozen before comparative native-server arm results. A changed
 protocol creates a new study and does not replace earlier evidence.
 

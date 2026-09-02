@@ -1,12 +1,13 @@
 # Project-naturalistic PCSS capture protocol
 
-> **HISTORICAL / ARCHIVE-ONLY:** This protocol belongs to the 20260831 PCSS
-> sequence line. Its proxy-receipt requirement, holdout rules ("historical
-> captures cannot be relabelled as an owner holdout", "cannot be supplied as
-> an arbitrary local workload file"), and its numeric acceptance thresholds
-> do NOT bind SSD L2 work. The current owner-trace corpus rules are in
-> `NOW.md` ("Owner-trace corpus"): the owner has authorized local session
-> transcripts as workload data, with pre-registration as the safeguard.
+> **HISTORICAL / ARCHIVE-ONLY:** This protocol belongs to the 2026-08 PCSS
+> sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`).
+> Its proxy-receipt requirement, holdout rules ("historical captures cannot
+> be relabelled as an owner holdout", "cannot be supplied as an arbitrary
+> local workload file"), and its numeric acceptance thresholds bind nothing
+> now. The current owner-trace corpus rules are in `NOW.md` ("Owner-trace
+> corpus"): the owner has authorized local session transcripts as workload
+> data, with pre-registration as the safeguard.
 
 This is the next evidence tier after the synthetic calibration receipts. It is
 not a prompt generator: only ordinary, user-initiated local llama-server work

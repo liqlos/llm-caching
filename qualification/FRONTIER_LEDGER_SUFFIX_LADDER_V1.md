@@ -1,5 +1,7 @@
 # PCSS exact-suffix-ladder v1 frontier ledger
 
+> **HISTORICAL / ARCHIVE-ONLY:** This file belongs to the 2026-08 PCSS sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`). Its rules, gates, thresholds, budgets and stop rules bind nothing now. The current line is defined only by `NOW.md`.
+
 This is a new, bounded calibration study. It does not modify, replace, or
 reinterpret any prior frozen study or receipt.
 

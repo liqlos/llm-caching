@@ -1,5 +1,7 @@
 # PCSS current-source one-ambiguity-control v1 frontier ledger
 
+> **HISTORICAL / ARCHIVE-ONLY:** This file belongs to the 2026-08 PCSS sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`). Its rules, gates, thresholds, budgets and stop rules bind nothing now. The current line is defined only by `NOW.md`.
+
 ## Triggering evidence
 
 The valid resource-admitted study

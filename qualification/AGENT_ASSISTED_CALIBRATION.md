@@ -1,5 +1,7 @@
 # Agent-assisted local calibration boundary
 
+> **HISTORICAL / ARCHIVE-ONLY:** This file belongs to the 2026-08 PCSS sequence line on llama.cpp, which is closed (see `docs/CLOSED_LINES.md`). Its rules, gates, thresholds, budgets and stop rules bind nothing now. The current line is defined only by `NOW.md`.
+
 The `project-naturalistic-v1` through `project-naturalistic-v4` artifacts use
 operator-authorized requests generated while this PCSS development task used
 the local Qwen server. Their proxy capture is technically trusted: visible
