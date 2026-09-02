@@ -169,33 +169,105 @@ recoverable prefix is too small to cover its fixed read cost. Phase M2
 
 ## Phase M2 — profit ladder
 
-### Lever 1: shorter-match admission threshold — kept, insufficient alone
+NOW.md's Phase M2 ladder was revised on 2026-09-02 after Gate G1-MLX's own
+diagnosis: the disk path's losing case (a cold turn recovering only a
+few hundred preamble tokens) is a **fixed cost per entry** (whole-state
+file, full-file sha256, monolithic read) that a small saving can't cover;
+large recoveries win 3-6x. Metric discipline also changed accordingly:
+report cold-turn TTFT bucketed by recovered tokens plus the "elsewhere"
+ratio; the full-workload percentage is still reported but is no longer
+the target, since it is dominated by the ~261 warm turns the disk tier
+cannot and should not move.
 
-Implemented in the fork (`DiskPromptStore.min_shorter_admission_tokens`,
-default 1500; `native/mlx-patches/0012`): a "shorter" disk match (the
-branch behind all 15 of Gate G1-MLX's small, sub-1x-speedup cold-restart
-recoveries) is only admitted if it is at least this many tokens — "exact"
-and "longer" matches are never gated, since by construction they recover
-at least as much as the query itself.
+### Lever 1 (superseded): constant admission threshold → cost-model admission — kept
 
-**Retroactive impact (already-collected Gate G1-MLX receipt, no rerun):**
-computed directly against `raw_results_g1.json`'s 286 paired `ram` /
-`ram_disk` turns — for each of the 24 cold turns, if `ram_disk`'s actual
-`cached_tokens` falls under 1500, substitute that turn's `ram` wall-clock
-(what it would cost with the disk consult skipped) in place of
-`ram_disk`'s actual one, then re-sum all 286 turns. 14 of the 24 cold
-turns fall below the threshold (all in the 310-566 cached-token range,
-the same shared-preamble-only recoveries the mean/median split flagged).
-Result: full-workload improvement moves from the recorded **13.4% to
-14.9%** — real, but nowhere near enough on its own to reach 25%.
+First shipped as a fixed 1500-token constant (`native/mlx-patches/0012`),
+then replaced same-day by the revised ladder's own item 1
+(`native/mlx-patches/0014`): `DiskPromptStore` keeps online EWMA
+estimates of this process's own prefill tokens/s (timed from the
+existing prefill-progress callback) and disk read MB/s (timed inside
+`load()`), and admits a "shorter" match only when its estimated
+time-saved clears its estimated read cost by a safety factor (default
+1.5x). A fixed token count's break-even point is itself a function of
+host/model/disk speed and would need re-tuning anywhere else; this
+self-calibrates from observed traffic instead. Unit-tested; kept.
 
-**Verdict: keep** (a strict improvement, unit-tested, no measured
-downside) but **not sufficient alone**. Next lever: prefetch/overlap
-(start the disk read during prefill instead of paying it serially before
-generation starts) — reduces the fixed disk-read cost itself rather than
-only skipping turns too small to cover it, so it should also help the 9
-already-profitable large-recovery cold turns that the admission threshold
-cannot touch.
+### Lever 2: remove eager restore-from-disk on restart — kept
+
+Direct profiling on M4 found the bounded eager restore-from-disk-on-start
+(added at Gate G1-MLX run 1 to fix an earlier unbounded-load stall) cost
+~2.1s per restart on its own (loading ~2 entries to fill a 4 GiB RAM
+budget), for no benefit the already-tested lazy `on_miss` disk-consult
+path (`LRUPromptCache` → `DiskPromptStore.consult_and_promote`) doesn't
+already provide per-request, at a fraction of the cost (~40ms for a
+small entry). Removed entirely (`native/mlx-patches/0013`). Kept.
+
+### A critical correctness bug found and fixed while confirming levers 1-2
+
+Removing eager restore exposed a real, pre-existing gap in
+`DiskPromptStore.search()`, present since the disk tier's first commit:
+it required one sequence's *entire* stored length to equal-or-prefix the
+other exactly ("shorter" or "longer"), missing the common case in this
+project's own frozen chat-shaped workload where a stored assistant-turn
+entry (`[wrapped user prompt][generated continuation]`) and the next
+turn's query (extending only the user-prompt portion, with its *own*
+different continuation) diverge partway through — well before either
+one's own full length — even though a large, valid, valuable common
+prefix exists between them. RAM's own `PromptTrie` never had this gap (a
+trie walk naturally yields a true longest-common-prefix); eager restore
+routed every post-restart lookup through that trie and accidentally
+masked the gap for as long as it existed. Found via a fast, isolated
+11-turn repro (not a full rerun) per NOW.md's iteration-speed rules;
+fixed by making `search()` compute a true common-prefix length for every
+candidate instead of a whole-key equality check (`native/mlx-patches/0015`).
+Live-verified on the exact repro that exposed it: a turn recovering
+6553/6896 tokens (matching the original Gate G1-MLX receipt exactly) had
+regressed to 0/6896 before this fix. See the continuous journal for the
+full trace. This is likely the single most consequential fix in the disk
+tier's history so far, not a marginal lever.
+
+### Confirming receipt (rerun 4, `no_cache`/`ram` control arms reused unchanged)
+
+Same host/model/corpus/restart schedule as Gate G1-MLX; only the
+`ram_disk` arm was re-run (levers 1-2 plus the search() fix all live),
+per the explicit instruction not to re-run control arms whose code path
+did not change. Disk quota 20 GiB (down from the original 60 GiB — the
+host's free space no longer supports 60 GiB now that run 3's own 45 GB
+fixture is kept for the Level 3 harness; the revised metric discipline
+doesn't depend on reproducing the original store's exact size dynamics).
+
+**Cold-turn TTFT by recovered-token bucket** (n=24, excluding the run's
+unavoidably-cold first turn), paired `ram` vs `ram_disk`:
+
+| bucket | n | aggregate ratio | sum(ram) | sum(ram_disk) |
+|---|---|---|---|---|
+| 0-499 | 14 | 1.00x | 73.5s | 73.7s |
+| 500-1999 | 0 | — | — | — |
+| 2000-7999 | 9 | **4.84x** | 205.4s | 42.4s |
+| 8000+ | 1 | **7.45x** | 44.2s | 5.9s |
+
+The small-recovery bucket is now net-**neutral** (1.00x) instead of the
+original Gate's 0.6-1.1x net loss — the cost-model admission lever
+working as intended. The large-recovery buckets, now that the search()
+fix lets them actually fire, are 4.8-7.5x — matching or exceeding the
+original Gate's 3.0-6.0x (the eager-restore removal's ~2s/restart saving
+compounds on top).
+
+**Elsewhere** (`turns_since_restart > 0`, n=261): `ram_disk`/`ram` mean
+0.958, median 0.961 — still at or below 1, no measured warm-turn cost.
+
+**Full-workload aggregate** (reported, not the target): sum(`ram`)
+1344.3s vs sum(`ram_disk`) 1116.3s — **16.97% less total wall-clock**
+than RAM-only (up from Gate G1-MLX's recorded 13.4%); 6.81x faster than
+`no_cache`.
+
+**Status:** real, receipt-backed progress (13.4% → 17.0%), still short of
+the owner's 25% target. Per the revised ladder, next: lever 2 in the new
+numbering (warm-start `system`-segment entries only on start — small,
+never conversation state, unlike the removed bulk restore) to make the
+now-neutral small-recovery bucket a small win instead of a wash, then
+lever 3 (shrink the fixed cost itself: quantized KV on disk, mmap-based
+load, chunked checksums).
 
 ### A methodological limitation found while building the fast-iteration harness
 
