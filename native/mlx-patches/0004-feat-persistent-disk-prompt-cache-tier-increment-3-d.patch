@@ -1,0 +1,263 @@
+From 4166e9690471870770e1d4568d1512c5ff2d8132 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 02:36:42 +0200
+Subject: [PATCH 4/4] feat: persistent disk prompt-cache tier, increment 3
+ (disk lookup on RAM miss)
+
+LRUPromptCache gains an on_miss(model, tokens, ram_cache, ram_rest) hook,
+called from fetch_nearest_cache only when the RAM answer left tokens
+unconsumed (ram_rest non-empty) -- a RAM exact hit never triggers it.
+Returning (cache, rest) overrides the RAM answer; None keeps it. The
+original method body moves to _fetch_nearest_cache_ram unchanged.
+
+DiskPromptStore.consult_and_promote implements the hook: exact / longer
+(trim) / shorter disk matches, in that preference order, each only used
+when at least as good as what RAM already had (a shorter disk match must
+beat RAM's own reuse length). A hit is deep-copied into the RAM tier via
+insert_cache before being handed to the caller, promoting it exactly the
+way the original RAM-only trie's own longer/shorter branches already
+avoid handing out the trie's live object.
+
+server.py wires prompt_cache.on_miss to close over the disk_store and the
+now-constructed prompt_cache (set after construction, since the closure
+needs a reference to prompt_cache itself).
+
+5 new tests (exact/longer/shorter disk promotion, RAM-hit-skips-on_miss);
+all 9 tests in this file and all 23 upstream cache tests still pass.
+
+Increment 3 of 3 (NOW.md Phase M1) -- the disk tier MVP is feature-complete.
+Gate G1-MLX (cache disabled / RAM-only / RAM+disk, real restarts) is next.
+---
+ mlx_lm/models/cache.py          | 14 +++++++
+ mlx_lm/prompt_cache_disk.py     | 62 +++++++++++++++++++++++++++-
+ mlx_lm/server.py                |  5 +++
+ tests/test_prompt_cache_disk.py | 71 +++++++++++++++++++++++++++++++++
+ 4 files changed, 151 insertions(+), 1 deletion(-)
+
+diff --git a/mlx_lm/models/cache.py b/mlx_lm/models/cache.py
+index 4a17b8a..cfe7a22 100644
+--- a/mlx_lm/models/cache.py
++++ b/mlx_lm/models/cache.py
+@@ -1670,6 +1670,7 @@ class LRUPromptCache:
+         max_size: int = 10,
+         max_bytes: int = 1 << 63,
+         on_evict: Optional[Any] = None,
++        on_miss: Optional[Any] = None,
+     ):
+         self.max_size = max_size
+         self.max_bytes = max_bytes
+@@ -1677,6 +1678,11 @@ class LRUPromptCache:
+         # or trim_to evicts an entry, so a caller can demote it to a slower
+         # tier instead of letting it be discarded.
+         self.on_evict = on_evict
++        # Called as on_miss(model, tokens, ram_cache, ram_rest) whenever the
++        # RAM lookup below did not fully satisfy the request (ram_rest is
++        # non-empty), so a caller can consult a slower tier. Returning
++        # (cache, rest) overrides the RAM answer; returning None keeps it.
++        self.on_miss = on_miss
+         self._trie = PromptTrie()
+         self._lru = LRUPromptCache.CacheOrder()
+         self._n_bytes = 0
+@@ -1698,6 +1704,14 @@ class LRUPromptCache:
+         return self._n_bytes
+ 
+     def fetch_nearest_cache(self, model: Any, tokens: List[int]):
++        cache, rest = self._fetch_nearest_cache_ram(model, tokens)
++        if self.on_miss is not None and len(rest) > 0:
++            result = self.on_miss(model, tokens, cache, rest)
++            if result is not None:
++                return result
++        return cache, rest
++
++    def _fetch_nearest_cache_ram(self, model: Any, tokens: List[int]):
+         result = self._trie.search(model, tokens)
+         if result.exact is not None:
+             cache_entry = self._trie.get(result.model, result.exact)
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+index 0e79d1c..1fdd2a6 100644
+--- a/mlx_lm/prompt_cache_disk.py
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -9,6 +9,7 @@ entry unusable and it is skipped rather than loaded, so a version or model
+ change never risks feeding a stale KV cache into generation.
+ """
+ 
++import copy
+ import hashlib
+ import json
+ import queue
+@@ -17,7 +18,13 @@ import time
+ from pathlib import Path
+ from typing import Any, Dict, List, Optional, Tuple
+ 
+-from .models.cache import LRUPromptCache, load_prompt_cache, save_prompt_cache
++from .models.cache import (
++    LRUPromptCache,
++    can_trim_prompt_cache,
++    load_prompt_cache,
++    save_prompt_cache,
++    trim_prompt_cache,
++)
+ 
+ 
+ class DiskPromptStore:
+@@ -176,6 +183,59 @@ class DiskPromptStore:
+                     break
+             self._write_index_locked()
+ 
++    def consult_and_promote(
++        self,
++        model_key,
++        tokens: List[int],
++        ram_cache,
++        ram_rest: List[int],
++        promote_into: "LRUPromptCache",
++    ):
++        """LRUPromptCache.on_miss hook: called when the RAM tier did not
++        fully satisfy a lookup (ram_rest is non-empty). If the disk tier can
++        do at least as well, loads and promotes that entry back into RAM
++        and returns (cache, rest) to use instead; otherwise returns None,
++        leaving the RAM answer (ram_cache, ram_rest) unchanged."""
++        exact, shorter, longer = self.search(model_key, tokens)
++        ram_reuse = len(tokens) - len(ram_rest)
++
++        if exact is not None:
++            cache = self.load(exact)
++            if cache is not None:
++                self.touch(exact)
++                promote_into.insert_cache(
++                    model_key, tokens, copy.deepcopy(cache), cache_type=exact["cache_type"]
++                )
++                return cache, []
++
++        if longer is not None:
++            cache = self.load(longer)
++            if cache is not None and can_trim_prompt_cache(cache):
++                self.touch(longer)
++                promote_into.insert_cache(
++                    model_key,
++                    longer["tokens"],
++                    copy.deepcopy(cache),
++                    cache_type=longer["cache_type"],
++                )
++                num_to_trim = len(longer["tokens"]) - len(tokens)
++                trim_prompt_cache(cache, num_to_trim)
++                return cache, []
++
++        if shorter is not None and len(shorter["tokens"]) > ram_reuse:
++            cache = self.load(shorter)
++            if cache is not None:
++                self.touch(shorter)
++                promote_into.insert_cache(
++                    model_key,
++                    shorter["tokens"],
++                    copy.deepcopy(cache),
++                    cache_type=shorter["cache_type"],
++                )
++                return cache, tokens[len(shorter["tokens"]):]
++
++        return None
++
+     def all_compatible(self, model_key) -> List[Dict[str, Any]]:
+         model_key = list(model_key)
+         with self._lock:
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index 4aee5ae..863eeb9 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -1758,6 +1758,11 @@ def run(
+             get_system_fingerprint(),
+         )
+         prompt_cache.on_evict = disk_store.put_async
++        prompt_cache.on_miss = (
++            lambda model, tokens, ram_cache, ram_rest: disk_store.consult_and_promote(
++                model, tokens, ram_cache, ram_rest, prompt_cache
++            )
++        )
+     response_generator = ResponseGenerator(model_provider, prompt_cache, disk_store)
+     if group.rank() == 0:
+         _run_http_server(host, port, response_generator)
+diff --git a/tests/test_prompt_cache_disk.py b/tests/test_prompt_cache_disk.py
+index ebacb4b..d8cea30 100644
+--- a/tests/test_prompt_cache_disk.py
++++ b/tests/test_prompt_cache_disk.py
+@@ -145,6 +145,77 @@ class TestDiskPromptStore(unittest.TestCase):
+         self.assertEqual(len(rows), 1)
+         self.assertEqual(rows[0]["tokens"], [1, 2, 3])
+ 
++    def test_ram_miss_consults_disk_exact_and_promotes(self):
++        store = self.make_store()
++        model_key = ("model-a", None, None)
++        tokens = [1, 2, 3, 4, 5]
++        store.put(
++            model_key, tokens, LRUPromptCache.CacheEntry(make_cache(5), 100, "assistant")
++        )
++
++        lru = LRUPromptCache(
++            max_size=10,
++            on_miss=lambda m, t, rc, rr: store.consult_and_promote(m, t, rc, rr, lru),
++        )
++        cache, rest = lru.fetch_nearest_cache(model_key, tokens)
++        self.assertIsNotNone(cache)
++        self.assertEqual(rest, [])
++        # Promoted into RAM: a second lookup must not need on_miss at all.
++        self.assertEqual(len(lru), 1)
++        cache2, rest2 = lru.fetch_nearest_cache(model_key, tokens)
++        self.assertEqual(rest2, [])
++
++    def test_ram_miss_consults_disk_longer_and_trims(self):
++        store = self.make_store()
++        model_key = ("model-a", None, None)
++        full = [1, 2, 3, 4, 5]
++        store.put(
++            model_key, full, LRUPromptCache.CacheEntry(make_cache(5), 100, "assistant")
++        )
++
++        lru = LRUPromptCache(
++            max_size=10,
++            on_miss=lambda m, t, rc, rr: store.consult_and_promote(m, t, rc, rr, lru),
++        )
++        cache, rest = lru.fetch_nearest_cache(model_key, full[:3])
++        self.assertIsNotNone(cache)
++        self.assertEqual(rest, [])
++        self.assertEqual(cache[0].offset, 3)  # trimmed down to the query length
++        # RAM now holds the untrimmed disk entry, not the trimmed copy.
++        ram_cache, ram_rest = lru.fetch_nearest_cache(model_key, full)
++        self.assertEqual(ram_rest, [])
++
++    def test_ram_miss_consults_disk_shorter_only_if_better_than_ram(self):
++        store = self.make_store()
++        model_key = ("model-a", None, None)
++        store.put(
++            model_key, [1, 2, 3], LRUPromptCache.CacheEntry(make_cache(3), 100, "assistant")
++        )
++
++        lru = LRUPromptCache(
++            max_size=10,
++            on_miss=lambda m, t, rc, rr: store.consult_and_promote(m, t, rc, rr, lru),
++        )
++        # RAM has nothing at all for this model, disk's [1, 2, 3] prefix wins.
++        cache, rest = lru.fetch_nearest_cache(model_key, [1, 2, 3, 4, 5])
++        self.assertIsNotNone(cache)
++        self.assertEqual(rest, [4, 5])
++
++        # Now RAM has a *better* (longer) prefix than disk for a new query;
++        # on_miss must not be consulted (rest is already empty after RAM).
++        exact_cache, exact_rest = lru.fetch_nearest_cache(model_key, [1, 2, 3])
++        self.assertEqual(exact_rest, [])
++
++    def test_ram_exact_hit_never_calls_on_miss(self):
++        def boom(*args, **kwargs):
++            raise AssertionError("on_miss must not be called on a RAM exact hit")
++
++        lru = LRUPromptCache(max_size=10, on_miss=boom)
++        model_key = ("model-a", None, None)
++        lru.insert_cache(model_key, [1, 2, 3], make_cache(3), cache_type="assistant")
++        cache, rest = lru.fetch_nearest_cache(model_key, [1, 2, 3])
++        self.assertEqual(rest, [])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+-- 
+2.46.0
+
