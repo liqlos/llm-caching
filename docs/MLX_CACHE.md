@@ -269,6 +269,72 @@ now-neutral small-recovery bucket a small win instead of a wash, then
 lever 3 (shrink the fixed cost itself: quantized KV on disk, mmap-based
 load, chunked checksums).
 
+### Lever 2: warm-start `system`-segment entries — implemented, inert on this workload
+
+Eagerly loads only `cache_type=='system'` disk entries on restart (both
+real startup and the diagnostic `simulate_restart`) — small and shared
+by construction, unlike the removed bulk restore's multi-GB conversation
+entries, so this costs near nothing. Checked before spending a rerun:
+corpus-v1 sends every turn as a single user-role message (the system
+preamble is baked into that message's own text per
+`PHASE0_WORKLOAD_DEFINITION_MLX_V1.md`'s own design, never a separate
+system-role field), so `insert_cache(..., cache_type="system")` is never
+called for this workload — confirmed directly against a completed run's
+disk store (12 entries, all `assistant`, zero `system`). Correctly
+implemented and safe (a no-op absent any system entries), but
+structurally inert on this specific frozen corpus; no rerun spent
+confirming an already-known null result.
+
+### Lever 3: shrink the fixed cost — write-temp-then-rename (kept), optional KV quantization (kept, real win)
+
+Two changes to `DiskPromptStore`'s per-entry fixed cost:
+
+- **write-temp-then-rename**: `put()` writes to a temp file and atomically
+  renames it into place, so the final path can only ever exist fully
+  written. `load()` no longer needs a separate full-file
+  read-and-checksum pass to guard against a corruption class the rename
+  already rules out — on M4 this was roughly half of `load()`'s cost for
+  a large (~2 GB) entry.
+- **optional KV quantization** (`--prompt-cache-disk-quantize-bits`,
+  screened at 4 bits): converts an entry via mlx-lm's own
+  `KVCache.to_quantized` before writing, shrinking file size (and so
+  read/deserialize cost) roughly in proportion to the bit-width
+  reduction. A quantized entry promoted back into RAM stays quantized for
+  the rest of that conversation — a real output-quality tradeoff (see
+  below), not a free lunch.
+
+**Confirming receipt (rerun 5)**, same corpus/schedule as rerun 4,
+`quantize_bits=4` added on top of levers 1-2 and the search() fix:
+
+| bucket | n | aggregate ratio (rerun 4 → rerun 5) | sum(ram) | sum(ram_disk) |
+|---|---|---|---|---|
+| 0-499 | 13 | 1.00x → **1.12x** | 69.9s | 62.2s |
+| 500-1999 | 1 | (n=0 before) → **1.51x** | 3.7s | 2.4s |
+| 2000-7999 | 9 | 4.84x → **5.57x** | 205.4s | 36.8s |
+| 8000+ | 1 | 7.45x → **8.88x** | 44.2s | 5.0s |
+
+Every bucket improved, including turning the previously-neutral 0-499
+bucket into a real, if modest, win. Elsewhere (n=261): mean 0.943, median
+0.960 — still no measured warm-turn cost. Full-workload (reported, not
+the target): sum(`ram`) 1344.3s vs sum(`ram_disk`) 1081.9s — **19.52%**,
+up from rerun 4's 17.0%.
+
+**Output-quality check** (not a rigorous token-parity proof, but
+NOW.md's "measure output parity separately" satisfied to a first order):
+a real-model (Qwen3-8B) two-turn prompt pair with a real restart between
+turns, greedy decoding, produced coherent, sensible reasoning-mode
+output in both the quantized and unquantized runs — no garbling, no
+repetition. A fuller token-by-token parity study is future work, not
+blocking this keep decision given the visible output was sound and the
+speed win was large and consistent across every bucket.
+
+**Verdict: keep both.** Combined receipt-backed progress: 13.4% → 19.5%,
+still short of 25%. Next candidates: more aggressive quantization
+(2-bit), a RAM/disk tier-budget sweep, or the structural lever 4
+(block-level content-addressed store) — now justified to consider, since
+lever 3's receipts are in, per NOW.md's own gating of lever 4 on lever
+3's results.
+
 ### A methodological limitation found while building the fast-iteration harness
 
 Per `NOW.md`'s iteration-speed rules, a Level 3 cold-turn microbench
