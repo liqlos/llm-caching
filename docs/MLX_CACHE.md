@@ -45,9 +45,13 @@ which is why the project pins a `main` SHA and installs from the fork.
 
 ## What this project adds
 
-Nothing yet beyond the `--prompt-cache-bytes` fix above (Phase M0, Gate M0
-closed — see receipt below). Phase M1 (persistent disk tier) has not
-started.
+The `--prompt-cache-bytes` fix above (Phase M0), and a persistent disk
+prompt-cache tier (Phase M1, `native/mlx-patches/0002`-`0011`): a
+`DiskPromptStore` (flush-on-shutdown/load-on-start, demote-on-eviction,
+disk-lookup-on-RAM-miss, a diagnostic in-process "simulated restart"
+endpoint) that survives server restarts, fail-closed on any model/version
+mismatch. GO at Gate G1-MLX (below); Phase M2 (profit ladder) is in
+progress.
 
 ## Gate M0 — closed, baseline recorded (2026-09-02)
 
@@ -96,6 +100,72 @@ Every claim above is bound to: M4 host `ai-server@mac2-llm.local`, `mlx`
 (`artifacts/mlx/20260901T193508Z-phase-m0-baseline/corpus-v1/corpus_v1_manifest.json`),
 receipt `result_m0_baseline.json` in the same run root. No claim beyond
 Gate M0 exists yet.
+
+## Gate G1-MLX — GO (2026-09-02)
+
+**Setup:** fork commit `d32bb98` (PIN `e93eaf7f491a` + patches 0001-0010;
+0011's diagnostic endpoint landed after this run), same host/model/corpus
+as Gate M0. Three arms replaying the identical 286-turn workload under an
+identical, pre-registered mechanical restart schedule (24 real
+`SIGTERM`+relaunch points per arm: between every session pair, plus
+mid-session after turn 9 in sessions over 15 turns) — `no_cache`,
+`ram` (4 GiB), `ram_disk` (4 GiB RAM + 60 GiB disk, real headroom).
+Definition: `PHASE_M1_GATE_G1_MLX_DEFINITION.md`. Receipt:
+`artifacts/mlx/20260901T193508Z-phase-m0-baseline/result_g1_mlx.json`.
+
+Reaching a clean run took three attempts; the first two surfaced and fixed
+real defects (all in `native/mlx-patches/`, all confirmed live on M4
+before rerunning) rather than being discarded as noise:
+
+1. Unbounded eager load-on-start stalled every post-restart request by
+   10-28s once the disk store grew past a few GB, regardless of the
+   request's own size — fixed by bounding the restore to the RAM tier's
+   own byte budget (`0008`).
+2. A load-then-immediately-evict-again cycle (the bounded restore filling
+   RAM, then `insert_cache`'s own eviction demoting the same entry right
+   back out) rewrote the exact file a not-yet-evaluated lazy array was
+   still reading from, crashing the server — fixed by skipping a
+   redundant re-write of an already-durable entry (`0010`). A related
+   MLX-per-thread-stream bug in the demote-on-eviction writer thread was
+   also caught and fixed in this window (`0009`).
+
+**Results (post-restart cold turns, n=24, `turns_since_restart == 0`,
+excluding the run's unavoidably-cold first turn):**
+
+- `ram_disk` gained non-zero `cached_tokens` on all 24 restarts (mean
+  2735, median 364); `ram` and `no_cache` are 0 on all 24 by construction.
+- Paired wall-clock ratio `ram / ram_disk`: mean 2.16x, **median 0.93x**
+  — the mean and median disagree, and that disagreement is itself the
+  finding, not noise to average away. Split by what each restart actually
+  recovers: the 9 restarts that land mid-conversation (recovering
+  3,000-11,000+ tokens of accumulated history) are 3.0x-6.0x faster; the
+  15 restarts that land on a short, fresh-session prompt (recovering
+  ~300-600 tokens, mostly a shared system-prompt-like preamble) are
+  0.6x-1.1x — a *fixed* disk-read overhead (reading and checksumming a
+  file, however small) that a saving of a few hundred prefill tokens does
+  not reliably cover. This matches the llama.cpp line's own transferred
+  finding above almost exactly, at the boundary it left open.
+  Aggregate absolute effect across all 24: sum(`ram`) 323.1s vs
+  sum(`ram_disk`) 154.5s — **2.09x, saving 52% of the wall-clock these 24
+  turns cost on RAM alone.**
+- Elsewhere (`turns_since_restart > 0`, n=261): paired ratio
+  `ram_disk / ram` mean 0.98, 95% CI [0.967, 0.996] — entirely at or
+  below 1; no measurable slowdown from carrying the disk tier.
+- Peak RSS: `ram_disk` 12.0 GB vs `ram`'s 4.7 GB — both well inside the
+  24 GiB host budget.
+- **Full-workload aggregate (all 286 turns, all restarts, both cold and
+  warm):** sum(`ram`) 1344.3s vs sum(`ram_disk`) 1164.1s — **13.4% less
+  total wall-clock** than RAM-only on this corpus; `ram_disk` is 6.5x
+  faster than `no_cache`.
+
+**Verdict:** GO — `ram_disk` clears the pre-registered condition (gains
+on post-restart cold turns, not net slower elsewhere) with a real,
+mechanistically-understood margin, not a borderline call. It is not yet a
+finished result: 13.4% overall is short of the owner's 25%-improvement
+target, and the mean/median split above names the next lever directly —
+an admission threshold that skips the disk consult when the expected
+recoverable prefix is too small to cover its fixed read cost. Phase M2
+(profit ladder) starts from exactly that lever.
 
 ## Relationship to the llama.cpp line
 
