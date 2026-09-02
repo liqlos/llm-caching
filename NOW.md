@@ -145,22 +145,63 @@ record it, keep the feature disabled by default, and stop the line.
 ### Phase M2 — Profit ladder (only after GO at G1-MLX)
 
 One lever at a time: hypothesis → paired experiment → receipt →
-keep-or-discard, journaling continuously. Suggested order:
+keep-or-discard, journaling continuously.
 
-1. **Quantized disk entries**: store demoted caches as `QuantizedKVCache`
-   (4-bit) — ~4x less disk and read; measure restore cost and output
-   parity separately.
-2. **Segment-level entries**: persist `system` and `user` segment caches
-   (mlx-lm already distinguishes them) so a shared preamble is one small
-   hot entry rather than part of every conversation's tail.
-3. **Prefetch**: start loading the disk candidate while the request is
-   still being tokenized / queued; overlap disk read with prefill of the
-   remainder.
-4. **Tier budgets**: RAM/disk size sweep — hit rate and latency vs budget
-   curve, not a single point.
-5. **Admission / recency policy** across restarts; multi-project stores.
-6. **Restore path**: lazy per-layer load, mmap-friendly layout, only if
-   the cost decomposition says restore dominates.
+Done so far: lever "admission threshold" (kept, +1.5 pp), lever "remove
+eager restore" (kept, ~2 s per restart). Diagnosis from Gate G1-MLX: the
+only losing case is a cold turn that recovers a few hundred preamble
+tokens, because the disk path has a **fixed cost per entry** (whole-state
+safetensors file, full-file sha256, monolithic read) that a small saving
+cannot cover; large recoveries win 3-6x. The ladder below is ordered to
+attack that fixed cost at its source, cheapest first.
+
+**Ladder (revised 2026-09-02, replaces the original order):**
+
+1. **Cost-model admission instead of a constant.** The server keeps two
+   online estimates — prefill tokens/s and disk read MB/s (EWMA over
+   observed requests/loads) — and consults disk only when
+   `entry_bytes / read_speed < recoverable_tokens / prefill_speed`
+   (times a safety factor). Replaces the fixed 1500-token threshold;
+   adaptive to host, model, quantization, and disk. Small change.
+2. **Warm-start the small stuff only.** On start, eagerly load only
+   `system`-segment entries (mlx-lm already tags them; they are tiny),
+   never conversation states. Closes the fresh-session-after-restart case
+   cheaply; the removed bulk restore was wrong because it loaded 2 GB
+   entries, not because eager loading is wrong.
+3. **Shrink the fixed cost.** Quantized KV on disk (`to_quantized`,
+   4-bit, ~4x less to read — measure output parity separately), mmap-based
+   load instead of a full read, chunked checksums or
+   write-temp-then-rename instead of a full-file sha256 on every load.
+   Expected to make the currently-losing cold turns profitable without
+   any threshold.
+4. **Block-level content-addressed store** (the structural upgrade; start
+   only after 3 shows where the monolithic path tops out). Store KV in
+   256-token blocks keyed by the hash of the token prefix (mlx-lm's
+   `KVCache.step` is already 256): a shared preamble is stored once for
+   all sessions; a growing conversation appends blocks instead of
+   rewriting its whole state (kills the write amplification that grew the
+   store to 45 GB); partial hits read exactly the matching blocks. This is
+   the vLLM / SGLang prefix-cache layout applied to the disk tier. It is
+   a rewrite of `DiskPromptStore`, weeks of agent work — justified by
+   receipts from 3, not assumed.
+5. **Write-behind at idle, not at eviction.** After each completed
+   request, when the queue is empty, flush new blocks/entries to disk in
+   the background so disk is always a superset of RAM and eviction is a
+   free drop. Natural on 4; a stopgap on monolithic files.
+6. **Layer-pipelined restore.** The forward pass consumes KV layer by
+   layer, so load layer *i+1* while layer *i* computes the uncached
+   tokens: hides most of the disk read inside prefill. Requires touching
+   the prefill loop; do after 4, where per-layer/per-block layout makes it
+   natural.
+7. **Tier budgets** (RAM/disk sweep, curve not point) and **multi-project
+   stores / recency across restarts** — after the structural levers,
+   because their optimum moves with each of them.
+
+Metric discipline for every lever: report cold-turn TTFT bucketed by
+recoverable tokens, plus the "elsewhere" ratio; the full-workload
+percentage is reported but is not the target — it is dominated by the
+261 warm turns the disk tier cannot and should not affect. The product's
+real numbers are cold-turn gain and zero warm-turn cost.
 
 Stop condition (loop-until-dry): the ladder ends when two consecutive
 levers each fail to produce a receipt-backed improvement, or when a lever's
