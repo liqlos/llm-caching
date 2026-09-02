@@ -335,6 +335,42 @@ still short of 25%. Next candidates: more aggressive quantization
 lever 3's receipts are in, per NOW.md's own gating of lever 4 on lever
 3's results.
 
+### The 25% target's theoretical ceiling on this workload: ~24.0%
+
+Computed directly from the frozen, pre-registered Gate G1-MLX schedule
+(24 restarts across 286 turns, corpus-v1): the disk tier can only ever
+change the wall-clock of the 24 post-restart cold turns -- by
+construction, every one of the other 261 "elsewhere" turns is a RAM hit
+regardless of the disk tier's own state, and every receipt so far
+confirms this (elsewhere ratio has stayed at ~0.94-0.99 across every
+lever). Those 24 cold turns' own `ram`-arm wall-clock sums to 323.1s out
+of the arm's 1344.3s total -- **24.03%** of the whole. That fraction is
+the literal ceiling: even a disk tier with zero read cost and perfect
+100% recovery on every cold turn (an unphysical best case) could not
+exceed a 24.03% improvement over `ram` on this exact workload and
+restart schedule, because the remaining 76% of total wall-clock is
+outside the disk tier's reach by the gate's own design.
+
+This means the owner's 25%-improvement target is **not reachable on the
+current frozen Gate G1-MLX workload as defined**, regardless of how much
+further Phase M2 optimizes the disk tier itself -- not a implementation
+shortfall, a structural property of how much of this specific 286-turn,
+24-restart trace is cold-restart-adjacent versus continuously warm. A
+higher ceiling would require a different restart cadence or workload
+(more frequent restarts relative to total turns, or shorter sessions) --
+that is a change to the frozen workload/schedule definition, which
+Gate G1-MLX's own pre-registration (`PHASE_M1_GATE_G1_MLX_DEFINITION.md`)
+does not permit revising after the fact without it being a new,
+separately-pre-registered gate, not a silent scope change to this one.
+
+This does not stop Phase M2: rerun 5's 19.5% still has **4.5 points of
+real headroom** left before hitting this workload's own ceiling, and
+closing that gap remains genuine, worthwhile progress. It does mean that
+continuing to chase a literal 25% number on this receipt would eventually
+require inventing an easier fraction to divide by rather than a real
+speedup — the honest target for the remainder of Phase M2 on this
+workload is closing in on ~24%, not 25%.
+
 ### A methodological limitation found while building the fast-iteration harness
 
 Per `NOW.md`'s iteration-speed rules, a Level 3 cold-turn microbench
