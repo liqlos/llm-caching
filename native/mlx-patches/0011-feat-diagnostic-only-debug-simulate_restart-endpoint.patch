@@ -1,0 +1,211 @@
+From e180d8d57b3197453f750348fa794a2cb118cf00 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 09:33:57 +0200
+Subject: [PATCH 11/11] feat: diagnostic-only /debug/simulate_restart endpoint
+ (NOW.md ladder level 3)
+
+Drops the RAM prompt cache and rebuilds it from the disk tier in-process,
+without killing and relaunching the server -- skips the ~15-20s model
+reload so a "post-restart cold turn" microbenchmark costs one HTTP
+request instead of a real process restart. The only externally-visible
+difference from a real restart this doesn't reproduce is that reload
+time; the cache state afterward is the same starting point.
+
+Refactored _generate()'s inline load-on-start block into
+ResponseGenerator._restore_from_disk(), now shared by real startup and
+this endpoint's restart path (_simulate_restart_now()). The restart runs
+on the generation thread, not the HTTP handler thread: it shares
+LRUPromptCache state with every real request without a lock (the
+generation thread is meant to be its sole owner) and MLX needs a stream
+bound to whichever thread evaluates the reloaded arrays -- the same class
+of bug already fixed twice for other threads in this cache (0009, and the
+flush-on-shutdown fix in an earlier round). request_simulated_restart()
+queues the work and blocks on an Event until the generation thread's main
+loop drains it, rather than calling the cache directly from the HTTP
+thread.
+
+Diagnostic-only per NOW.md: never gate evidence on its own, only for
+screening ladder levers and restore-path work at the "cold-turn
+microbench on a store fixture" iteration-speed level.
+---
+ mlx_lm/server.py | 122 ++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 95 insertions(+), 27 deletions(-)
+
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index 0dec15d..0bd4992 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+ from pathlib import Path
+ from queue import Empty as QueueEmpty
+ from queue import Queue
+-from threading import Thread
++from threading import Event, Thread
+ from typing import (
+     Any,
+     Callable,
+@@ -429,6 +429,7 @@ class ResponseGenerator:
+         self.prompt_cache = prompt_cache
+         self.disk_store = disk_store
+         self.requests = Queue()
++        self._restart_requests = Queue()
+         self._state_machine_cache = {}
+ 
+         self._time_budget = TimeBudget()
+@@ -445,6 +446,67 @@ class ResponseGenerator:
+     def join(self):
+         self._generation_thread.join()
+ 
++    def _restore_from_disk(self):
++        """Rebuild the RAM cache from the disk tier, bounded to the RAM
++        tier's own byte budget (most-recently-used first). Loading every
++        compatible disk entry unconditionally was measured live on M4 to
++        stall the first post-restart request by 10-25s once the disk
++        store grew past a few GB: on_miss already covers correctness for
++        anything left un-preloaded (loaded lazily, on the request that
++        actually needs it), so there is nothing to gain from preloading
++        more than what the RAM tier can hold anyway -- the rest would
++        just be evicted straight back out.
++
++        Called once at real startup (from _generate(), on the generation
++        thread -- MLX needs a stream bound to whichever thread evaluates
++        these arrays) and by simulate_restart() for the diagnostic-only
++        "drop RAM, reopen disk" endpoint NOW.md's iteration-speed ladder
++        uses to screen ladder levers without a real process restart.
++        """
++        if self.disk_store is None or self.model_provider.model_key is None:
++            return
++        rows = self.disk_store.all_compatible(self.model_provider.model_key)
++        rows.sort(key=lambda r: r.get("last_used", 0), reverse=True)
++        loaded_bytes = 0
++        for row in rows:
++            if loaded_bytes + row["n_bytes"] > self.prompt_cache.max_bytes:
++                continue
++            cache = self.disk_store.load(row)
++            if cache is None:
++                continue
++            self.prompt_cache.insert_cache(
++                tuple(row["model_key"]),
++                row["tokens"],
++                cache,
++                cache_type=row["cache_type"],
++            )
++            loaded_bytes += row["n_bytes"]
++
++    def _simulate_restart_now(self):
++        """Drop the RAM tier and rebuild it from the disk index. Must only
++        be called from the generation thread: it shares LRUPromptCache
++        state with every real request without a lock (by design -- that
++        thread is the sole owner), and MLX needs a stream bound to
++        whichever thread evaluates the reloaded arrays."""
++        self.prompt_cache.trim_to(n_sequences=0, n_bytes=0)
++        self._restore_from_disk()
++
++    def request_simulated_restart(self, timeout: float = 60.0):
++        """Diagnostic-only (never gate evidence on its own, per NOW.md):
++        thread-safe from any caller (e.g. an HTTP handler thread). Queues
++        the restart for the generation thread and blocks until it has run,
++        so the RAM-drop-and-reload always happens on the one thread that
++        owns the cache and has an MLX stream. A real restart's only
++        externally-visible difference this doesn't reproduce is the
++        ~15-20s model reload; the cache state afterward is the same
++        starting point -- this is the "simulated restart" NOW.md's
++        iteration-speed ladder uses to screen ladder levers without one.
++        """
++        done = Event()
++        self._restart_requests.put(done)
++        if not done.wait(timeout=timeout):
++            raise TimeoutError("simulated restart did not complete in time")
++
+     def _log_cache_stats(self):
+         n_sequences = len(self.prompt_cache)
+         n_bytes = self.prompt_cache.nbytes
+@@ -638,32 +700,7 @@ class ResponseGenerator:
+         # Load the default model if it is given
+         self.model_provider.load_default()
+ 
+-        # Rebuild the RAM cache from the disk tier, once, at startup --
+-        # bounded to the RAM tier's own byte budget (most-recently-used
+-        # first). Loading every compatible disk entry unconditionally was
+-        # measured live on M4 to stall the first post-restart request by
+-        # 10-25s once the disk store grew past a few GB: on_miss already
+-        # covers correctness for anything left un-preloaded (loaded lazily,
+-        # on the request that actually needs it), so there is nothing to
+-        # gain from preloading more than what the RAM tier can hold anyway
+-        # -- the rest would just be evicted straight back out.
+-        if self.disk_store is not None and self.model_provider.model_key is not None:
+-            rows = self.disk_store.all_compatible(self.model_provider.model_key)
+-            rows.sort(key=lambda r: r.get("last_used", 0), reverse=True)
+-            loaded_bytes = 0
+-            for row in rows:
+-                if loaded_bytes + row["n_bytes"] > self.prompt_cache.max_bytes:
+-                    continue
+-                cache = self.disk_store.load(row)
+-                if cache is None:
+-                    continue
+-                self.prompt_cache.insert_cache(
+-                    tuple(row["model_key"]),
+-                    row["tokens"],
+-                    cache,
+-                    cache_type=row["cache_type"],
+-                )
+-                loaded_bytes += row["n_bytes"]
++        self._restore_from_disk()
+ 
+         current_model = None
+         current_sampling = None
+@@ -686,6 +723,14 @@ class ResponseGenerator:
+             mx.random.seed(seed)
+ 
+         while not self._stop:
++            while True:
++                try:
++                    done = self._restart_requests.get_nowait()
++                except QueueEmpty:
++                    break
++                self._simulate_restart_now()
++                done.set()
++
+             request = None
+             if not drain_batch:
+                 timeout = (
+@@ -1093,6 +1138,10 @@ class APIHandler(BaseHTTPRequestHandler):
+         """
+         Respond to a POST request from a client.
+         """
++        if self.path == "/debug/simulate_restart":
++            self.handle_simulate_restart()
++            return
++
+         request_factories = {
+             "/v1/completions": self.handle_text_completions,
+             "/v1/chat/completions": self.handle_chat_completions,
+@@ -1651,6 +1700,25 @@ class APIHandler(BaseHTTPRequestHandler):
+         self.wfile.write('{"status": "ok"}'.encode())
+         self.wfile.flush()
+ 
++    def handle_simulate_restart(self):
++        """Diagnostic-only endpoint (NOW.md's iteration-speed ladder,
++        never gate evidence on its own): drops the RAM prompt cache and
++        rebuilds it from the disk tier, in-process, without a real
++        restart -- skips the ~15-20s model reload so a "post-restart cold
++        turn" microbenchmark costs one request, not one process restart.
++        """
++        try:
++            self.response_generator.request_simulated_restart()
++        except TimeoutError as e:
++            self._set_completion_headers(504)
++            self.end_headers()
++            self.wfile.write(json.dumps({"error": str(e)}).encode())
++            return
++        self._set_completion_headers(200)
++        self.end_headers()
++        self.wfile.write(b'{"status": "ok"}')
++        self.wfile.flush()
++
+     def handle_models_request(self):
+         """
+         Handle a GET request for the /v1/models endpoint.
+-- 
+2.46.0
+
