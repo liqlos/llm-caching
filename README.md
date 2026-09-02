@@ -1,13 +1,16 @@
-# llm-caching — datastore speculative decoding on MLX
+# llm-caching — datastore speculative decoding on MLX (closed 2026-09-03)
 
-Decode-side acceleration for local LLM serving on the owner's Apple
-Silicon machines: a persistent datastore of previously generated and seen
-token sequences proposes multi-token drafts during generation, which the
-target model verifies in one forward pass. Output is correct up to
-floating-point ties (see [NOW.md](NOW.md)'s Goal invariant); the model
-emits more tokens per weight pass. Built on MLX into the existing Apple
-Silicon speculation stack (mlx-dspark, then oMLX), measured on the owner's
-real agentic-coding traffic.
+**Line D is closed as NO_GO.** A persistent, cross-session datastore of
+previously generated and seen token sequences was built and measured
+against the per-request lookup mlx-dspark already ships, on the owner's
+real agentic-coding traffic. It does not beat per-request lookup by the
+pre-registered margin (1.014x vs. a 1.20x threshold) — the owner's long
+coding sessions self-saturate a per-request drafter before persistence
+across sessions can add much. See
+[docs/CLOSED_LINES.md](docs/CLOSED_LINES.md) for the full record and
+[NOW.md](NOW.md) for the decision trail. `GlobalDatastore` stays in the
+fork (`liqlos/mlx-dspark`) as a working, correctness-checked, opt-in
+feature; no further engineering is planned here.
 
 Prefix / prefill KV caching is **out of scope**: oMLX already provides it
 for Apple Silicon. See [docs/CLOSED_LINES.md](docs/CLOSED_LINES.md) for

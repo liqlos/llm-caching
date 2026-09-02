@@ -65,6 +65,58 @@ The *idea* is not closed. It is reopened on MLX under a new hypothesis in
 mlx-lm's speculative path verifies drafts natively and exactly, and a
 suffix-tree datastore over text tokens costs ~10 bytes/token, not KV state.
 
+## Persistent cross-session datastore speculation on MLX — CLOSED 2026-09-03
+
+Line D, reopened from the PCSS verdict above under the hypothesis that a
+new implementation (MLX, exact-by-construction verification, an in-RAM
+suffix/n-gram index rather than KV state) would fix both of PCSS's failure
+causes. It did — the datastore never diverged from what the underlying
+speculative engine already does — but the thesis still failed on its own
+central measurement.
+
+**Gate D0 (throughput): NO_GO.** The datastore's margin over the
+per-request lookup mlx-dspark already ships (a persistent global index vs.
+drafting from the current session's own history) measured **1.014**
+against a pre-registered 1.20 threshold, on 319 real `Qwen3-8B-8bit`
+greedy turns replayed against a 1.46M-token index built from the owner's
+own coding-agent transcripts (6 projects, 44 sessions). Robust to every
+variant tried: 1.014-1.071 across three verify-cost curves; flat under a
+6x larger index (0.007 drift); no profitable project subset (one project
+was below parity); unmoved by fixing several real bugs in the draft
+algorithm (a matcher that stayed silent half the time, a tie-break that
+favored recency over match quality) that each mattered more than the
+cross-session margin itself. Two independent implementations (an n-gram
+hash and a suffix array, built without sharing code or results) converged
+on the same ratio within 5%. Root cause: the owner's sessions are long
+(median 76,694 tokens) and a per-request drafter self-saturates on the
+current session's own history long before a persistent store can add
+much — of 43,659 accepted draft tokens in the suffix-array replay, other
+sessions and projects contributed 4.2%. Receipt:
+`artifacts/mlx/20260902T152845Z-phase-d0-marathon/d0b/GATE_D0_RECEIPT.md`
+(local-only; referenced here by path, not content).
+
+**Exactness: PASS**, once measured against the guarantee the underlying
+engine (mlx-dspark) actually offers — greedy up to floating-point ties —
+rather than the stronger "bit-identical" this project's own docs
+mistakenly claimed until this closure. No divergence between the
+datastore-on and datastore-off arms ever exceeded ~2 bf16 ulps, across 24
+real `Qwen3-8B-8bit` turns in two kernel modes.
+
+**One real, general lever surfaced and was declined.** Verify cost at long
+context runs ~34% above a bandwidth-bound floor at 16k tokens (each extra
+verify row re-reads nearly the full KV cache) — a property of Apple
+Silicon's attention kernels, not of the datastore, applying to any
+drafter and any model on the host. The owner decided not to expand this
+project's scope to pursue it; it may be picked up by a future,
+separately-scoped project.
+
+**Why closed:** the central technical thesis — that persistence across
+sessions and projects beats per-request lookup — is false on the owner's
+actual workload (long agentic coding sessions), independent of engine
+correctness or algorithm quality. `GlobalDatastore` stays in the fork
+(`liqlos/mlx-dspark`) as a working, correctness-checked, opt-in feature;
+no further engineering or measurement is planned against it here.
+
 ## Historical PCSS documents
 
 `PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, and `qualification/` describe the 2026-08

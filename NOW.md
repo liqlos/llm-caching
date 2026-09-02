@@ -1,4 +1,4 @@
-# Current handoff — Line D: persistent cross-session datastore speculation on Apple Silicon
+# Current handoff — Line D: CLOSED (persistent cross-session datastore speculation on Apple Silicon)
 
 `NOW.md` is the sole authority for scope, plan, gates, and execution rules.
 `docs/CLOSED_LINES.md` records what was tried and closed. Everything else
@@ -6,7 +6,41 @@ in the tree (`PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `qualification/`, the
 `llamacpp_*` / `exact_prompt_*` / `live_server_*` lab modules) is historical
 prior art and binds nothing.
 
-## Status (2026-09-02, Gate D0 answered)
+## Status (2026-09-03, Line D closed)
+
+**Line D is closed.** Gate D0 (throughput) was NO_GO, the exactness gate
+(correctness) passed cleanly, and the one remaining real lever found in
+this work -- long-context verify cost, ~34% above a bandwidth-bound floor
+at 16k -- is a general Apple-Silicon engine lever unrelated to the
+datastore, and the owner decided not to expand this project's scope to
+pursue it (2026-09-03; see decision record below). Nothing further is
+planned on this line. The three sections immediately below are the
+as-answered record, kept for reference; do not resume work from them
+without a new scope decision.
+
+## Decision record (2026-09-03)
+
+1. **Gate D0 verdict: accepted as NO_GO, no restatement.** Criterion 1
+   (datastore's margin over per-request lookup) measured 1.014 against a
+   1.20 threshold, robust across every verify curve, every algorithmic
+   variant swept, every project, and a 6x growth in index size. See
+   `d0b/GATE_D0_RECEIPT.md`.
+2. **Exactness standard: "greedy up to floating-point ties," not
+   bit-identical.** Three independent agents, working read-only with no
+   coordination, unanimously reached this from the fork's own source.
+   Datastore neutrality (no divergence above ~2 bf16 ulps between
+   datastore-on and datastore-off) gate: PASS. See the Goal invariant
+   below and `d1/exactness_gate_v2_summary.json`.
+3. **Long-context verify cost: real, large (34% at 16k), and out of
+   scope.** Measured directly (not extrapolated) on the M4:
+   `d0c/verify_curve_ctx.json`. Offered to the owner as a scope-expansion
+   decision (new line: general Apple-Silicon verify-cost engineering,
+   unrelated to the datastore) versus closing Line D outright. Owner chose
+   **close the line, do not expand scope** -- this lever may be picked up
+   by a future, separately-scoped project, but no further GPU time or
+   engineering goes to it here.
+
+## Status (2026-09-02, Gate D0 answered — superseded by the closure above)
 
 **Gate D0 is NO_GO as pre-registered.** The receipt is
 `artifacts/mlx/20260902T152845Z-phase-d0-marathon/d0b/GATE_D0_RECEIPT.md`
@@ -431,6 +465,14 @@ never wait on the M4.
 
 ## Explicitly parked
 
+- Everything in this section, as of 2026-09-03: Line D itself is closed
+  (see `docs/CLOSED_LINES.md`), so these are no longer "levers to reach
+  for once D0 passes" -- there is no active line to reach for them from.
+- Long-context verify-cost engineering (Metal attention kernel or
+  equivalent): real, measured (~34% above a bandwidth-bound floor at 16k),
+  general to any drafter/model on this host, and NOT datastore-specific.
+  Owner declined to expand this project's scope to pursue it (2026-09-03).
+  A future, separately-scoped project may pick this up.
 - Prefix / prefill KV caching: out of scope (use oMLX).
 - Building on mlx-lm's speculative loop: closed upstream, buggy — no.
 - Tree-attention verification in a custom engine: mlx-vlm already has it
