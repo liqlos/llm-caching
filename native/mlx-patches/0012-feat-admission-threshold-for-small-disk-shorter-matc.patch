@@ -1,0 +1,162 @@
+From ebd3cc7e8ffa0c01b5a084e47e3013565b6270f1 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 11:30:49 +0200
+Subject: [PATCH 12/12] feat: admission threshold for small disk 'shorter'
+ matches (Phase M2 lever 1)
+
+Gate G1-MLX's post-restart cold turns split cleanly by what each restart
+recovers: 9 mid-conversation restarts (3,000-11,000+ tokens, all
+exact/longer disk matches) were 3-6x faster; 15 short-prompt restarts
+(~300-600 tokens via a "shorter" match -- a small shared preamble in an
+otherwise-fresh conversation) were 0.6-1.1x, a net loss on most of them.
+A fixed disk-read-and-checksum cost (~1.5-2.5s, measured live on M4)
+isn't reliably covered by recovering only a few hundred prefill tokens.
+
+DiskPromptStore gains min_shorter_admission_tokens (default 1500,
+--prompt-cache-disk-min-admission-tokens): consult_and_promote's
+"shorter" branch is skipped below this length, leaving the RAM answer
+(or no answer) untouched. exact/longer matches are not gated -- by
+construction the query must be at least as long as the disk entry, so
+they never fall in the small-recovery regime this threshold targets.
+
+New test: test_shorter_admission_threshold_skips_a_small_reused_prefix.
+Existing test_ram_miss_consults_disk_shorter_only_if_better_than_ram
+updated to set the threshold to 0, isolating it from this new gate.
+---
+ mlx_lm/prompt_cache_disk.py     | 20 +++++++++++++++++-
+ mlx_lm/server.py                | 11 ++++++++++
+ tests/test_prompt_cache_disk.py | 37 ++++++++++++++++++++++++++++++++-
+ 3 files changed, 66 insertions(+), 2 deletions(-)
+
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+index 5af5dc6..a41e2ee 100644
+--- a/mlx_lm/prompt_cache_disk.py
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -38,6 +38,7 @@ class DiskPromptStore:
+         mlx_version: str,
+         mlx_lm_version: str,
+         system_fingerprint: str,
++        min_shorter_admission_tokens: int = 1500,
+     ):
+         self.dir = Path(directory)
+         self.dir.mkdir(parents=True, exist_ok=True)
+@@ -45,6 +46,19 @@ class DiskPromptStore:
+         self.mlx_version = mlx_version
+         self.mlx_lm_version = mlx_lm_version
+         self.system_fingerprint = system_fingerprint
++        # Admission threshold for the "shorter" branch only (see
++        # consult_and_promote): a fixed disk-read-and-checksum cost
++        # (~1.5-2.5s, measured live on M4) isn't reliably covered by a
++        # small reused prefix. Gate G1-MLX's post-restart cold turns split
++        # cleanly on this: 9 restarts recovering 3,000-11,000+ tokens (all
++        # "exact"/"longer" hits, inherently large) were 3-6x faster; 15
++        # recovering ~300-600 tokens via a "shorter" hit (a small shared
++        # preamble in an otherwise-fresh conversation) were 0.6-1.1x -- a
++        # net loss on most of them. "exact" and "longer" matches are not
++        # gated: by construction the query itself must be at least as long
++        # as the disk entry, so they never fall in the small-recovery
++        # regime that motivated this threshold.
++        self.min_shorter_admission_tokens = min_shorter_admission_tokens
+         self._index_path = self.dir / "index.json"
+         self._lock = threading.Lock()
+         self._index: List[Dict[str, Any]] = self._read_index()
+@@ -272,7 +286,11 @@ class DiskPromptStore:
+                 trim_prompt_cache(cache, num_to_trim)
+                 return cache, tokens[prefix:]
+ 
+-        if shorter is not None and len(shorter["tokens"]) > ram_reuse:
++        if (
++            shorter is not None
++            and len(shorter["tokens"]) > ram_reuse
++            and len(shorter["tokens"]) >= self.min_shorter_admission_tokens
++        ):
+             cache = self.load(shorter)
+             if cache is not None:
+                 self.touch(shorter)
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index 0bd4992..8cfde99 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -1843,6 +1843,7 @@ def run(
+             mx.__version__,
+             __version__,
+             get_system_fingerprint(),
++            min_shorter_admission_tokens=model_provider.cli_args.prompt_cache_disk_min_admission_tokens,
+         )
+         prompt_cache.on_evict = disk_store.put_async
+         prompt_cache.on_miss = (
+@@ -2002,6 +2003,16 @@ def main():
+         help="Maximum size in bytes of the disk prompt-cache tier "
+         "(only used with --prompt-cache-dir)",
+     )
++    parser.add_argument(
++        "--prompt-cache-disk-min-admission-tokens",
++        type=int,
++        default=1500,
++        help="Minimum reused-prefix length (in tokens) for a disk "
++        "'shorter' match to be worth its fixed read cost; smaller matches "
++        "are skipped rather than loaded. Does not gate exact/longer "
++        "matches, which are never this small. (only used with "
++        "--prompt-cache-dir)",
++    )
+     parser.add_argument(
+         "--pipeline",
+         action="store_true",
+diff --git a/tests/test_prompt_cache_disk.py b/tests/test_prompt_cache_disk.py
+index 8634379..1483a63 100644
+--- a/tests/test_prompt_cache_disk.py
++++ b/tests/test_prompt_cache_disk.py
+@@ -217,7 +217,9 @@ class TestDiskPromptStore(unittest.TestCase):
+         self.assertEqual(ram_rest, [])
+ 
+     def test_ram_miss_consults_disk_shorter_only_if_better_than_ram(self):
+-        store = self.make_store()
++        # min_shorter_admission_tokens=0 isolates the "better than RAM's
++        # own reuse" logic from the separate admission-threshold test below.
++        store = self.make_store(min_shorter_admission_tokens=0)
+         model_key = ("model-a", None, None)
+         store.put(
+             model_key, [1, 2, 3], LRUPromptCache.CacheEntry(make_cache(3), 100, "assistant")
+@@ -237,6 +239,39 @@ class TestDiskPromptStore(unittest.TestCase):
+         exact_cache, exact_rest = lru.fetch_nearest_cache(model_key, [1, 2, 3])
+         self.assertEqual(exact_rest, [])
+ 
++    def test_shorter_admission_threshold_skips_a_small_reused_prefix(self):
++        """Gate G1-MLX (live M4 data): a 'shorter' disk match recovering
++        only a few hundred tokens costs more in fixed disk-read overhead
++        than it saves. Below the threshold, on_miss must return None and
++        leave the RAM answer untouched -- not load anything from disk."""
++        store = self.make_store(min_shorter_admission_tokens=1500)
++        model_key = ("model-a", None, None)
++        short_tokens = list(range(300))  # well under the threshold
++        store.put(
++            model_key,
++            short_tokens,
++            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 100, "assistant"),
++        )
++
++        query = short_tokens + list(range(1000, 1700))
++        result = store.consult_and_promote(model_key, query, None, query, promote_into=None)
++        self.assertIsNone(result)
++
++        # A "shorter" match at or above the threshold is still admitted.
++        store2 = self.make_store(min_shorter_admission_tokens=200)
++        store2.put(
++            model_key,
++            short_tokens,
++            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 100, "assistant"),
++        )
++        lru = LRUPromptCache(
++            max_size=10,
++            on_miss=lambda m, t, rc, rr: store2.consult_and_promote(m, t, rc, rr, lru),
++        )
++        cache, rest = lru.fetch_nearest_cache(model_key, query)
++        self.assertIsNotNone(cache)
++        self.assertEqual(rest, query[len(short_tokens):])
++
+     def test_ram_exact_hit_never_calls_on_miss(self):
+         def boom(*args, **kwargs):
+             raise AssertionError("on_miss must not be called on a RAM exact hit")
+-- 
+2.46.0
+
