@@ -6,36 +6,50 @@ in the tree (`PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `qualification/`, the
 `llamacpp_*` / `exact_prompt_*` / `live_server_*` lab modules) is historical
 prior art and binds nothing.
 
-## Status (2026-09-02, marathon in progress)
+## Status (2026-09-02, Gate D0 answered)
 
-D0b (arm 1, `Qwen3-8B-8bit`) is running on M4, background, ETA several hours — do not
-wait on it or restart it; check `artifacts/mlx/20260902T152845Z-phase-d0-marathon/
-JOURNAL.md` (local-only, not in git) for the live state and every detail below. While it
-runs: `run_d0b.py` gained `--resume` and `--reuse-prompt-cache`. **The arm was switched to
-that v2 script at 19:00** because v1 persisted only aggregate sums and never the generated
-token ids — six hours of GPU would have yielded one number under one (known-inert) scorer.
-v2 appends every turn's real `token_ids` to `<out>.turns.jsonl`, so **generation happens
-once and any scoring policy replays offline in seconds**; `--resume` makes a kill free and
-the file grows monotonically, so the gate can be answered against the first ~200 turns
-without waiting for 600. Highest-value next task while it runs: the offline replay tool
-that re-scores a/b/c from `turns.jsonl` under the current scorer, `datastore.py`'s fixed
-scorer, and a "per-request wins ties" variant. Early 60-turn partial (v1, known-bad
-scorer): global+per-request was byte-identical to global alone and **0.985x** of
-per-request alone at width 8 — i.e. the tie-break and the scoring, not the datastore's
-existence, decide this gate. Also measured: plain-greedy baseline on this host is
-~4.4 tok/s at ~8k context for `Qwen3-8B-8bit` (the memo's ~26 tok/s roofline is 3-5x
-optimistic; reconcile before quoting any ceiling), and prompt-cache reuse changed nothing
-because prefill is not the bottleneck. Phase D1's MVP (`GlobalDatastore`,
-the `E[accepted]+1 > c(width)` gate, per-round logging) landed on the fork
-(`liqlos/mlx-dspark`, submodule bumped) with 27 passing tests. A first exactness-gate run
-(rung 3 of the ladder, 0.5B model) found 1/12 checks diverging from plain greedy at
-width 8 — reproduces identically with the datastore disabled, so it is NOT a D1 bug, but
-Phase D1 step 4 ("any divergence stops the line") is not yet cleared as written: the next
-session should re-run the gate at a larger sample against the real D0 target and report a
-token-identity rate before trusting any G1-D throughput number. See the journal's
-"Overlap work while D0b runs" entry for the full detail, including a scoring-alignment bug
-found (and fixed, in the fork only — D0a's own copy was deliberately left untouched) while
-porting D0a's match-scoring algorithm into the datastore.
+**Gate D0 is NO_GO as pre-registered.** The receipt is
+`artifacts/mlx/20260902T152845Z-phase-d0-marathon/d0b/GATE_D0_RECEIPT.md`
+(+ `.json`, both local-only, not in git); it carries every number and the file
+and key each one came from. Criterion 1, the global datastore's margin over the
+per-request lookup mlx-dspark already ships, measured **1.014** against a 1.20
+threshold (1.014-1.071 across all three verify curves). Criterion 2, the product
+against no drafting, measured **2.005** against a 1.30 threshold. The gate needs
+both, so it fails; the disagreement between the two is the finding, because
+criterion 1 prices only the crossing of session boundaries while criterion 2
+prices the product, and the product is delivered almost entirely by per-request
+lookup. The pre-registered escape clause of a profitable subset of projects does
+not apply: no project reaches 1.20 and one is below parity at 0.974.
+
+Evidence is 319 real `Qwen3-8B-8bit` greedy turns replayed offline against a
+1.46M-token index. The margin does not grow with the cache: over a 6x larger
+index it drifts 0.007, so the remaining turns of the planned 600 cannot carry
+it. It is also not an artefact of a weak matcher -- selection weight, match-length
+cap, iterative refill, minimum match length, and the SuffixDecoding variants
+(frequency scoring, adaptive length, tree drafts) were each swept, and while the
+absolute level moves from 2.47 to 3.06 tokens per step, the margin stays inside
+1.01-1.07 throughout. A second agent, given only the raw data and none of this
+reasoning, reached the same ratio independently. The one axis that did matter is
+the drafter's minimum match length: demanding a trigram before proposing left it
+silent in half of all rounds, and dropping to a single-token match is worth
++15.6%.
+
+Two caveats bind anything quoted from the receipt. Everything at 8k context and
+beyond rides on an extrapolated per-row depth slope, not a measured curve -- the
+host calibration is tagged `ctx512`. And the largest lever found anywhere in this
+work is outside the datastore: each extra verify row costs close to a full KV
+read, so the optimal draft width collapses from 8 to 3 as context grows, and a
+bandwidth-bound multi-row attention would be worth more than the datastore ever
+was, for every drafter and every model on the host.
+
+In flight: `d1/exactness_gate_v2.py` on M4, checking on the real D0 target that
+the datastore never changes output and reporting the speculative-vs-plain
+identity rate, in both the stock and the server kernel classes. The D0b generator
+is stopped to free the GPU and resumes with `--resume`; completing it only
+lengthens the size curve. Earlier status claims now superseded: prefill *is* a
+large part of the 4.4 tok/s figure (the 32k-char sliding tail window makes each
+prompt a fresh string, so the prompt cache reuses almost nothing), and the memo's
+roofline should be read as 29 tok/s at 512 context and 23 at 8k.
 
 ## Scope decision (owner, 2026-09-02)
 
@@ -57,6 +71,13 @@ Engine: MLX on the owner's Macs. Traffic: agentic coding.
 - `docs/research/APPLE_SILICON_VERIFY_ECONOMICS.md` — why verify cost is
   what it is on M-series, per-target speedup ceilings, kernels to reuse.
 - `docs/research/REPO_AUDIT_2026-09-02.md` — the post-pivot cleanup record.
+- `docs/research/APPLE_SILICON_HEADROOM.md` — where the host's decode
+  time actually goes, the per-row verify depth slope, and which levers
+  are worth pulling; supersedes the roofline figures in
+  `APPLE_SILICON_VERIFY_ECONOMICS.md`.
+- `docs/research/DATASTORE_FUNDAMENTAL_PROFIT.md` — the oracle bound on
+  occurrence selection and why count statistics carry little signal on
+  this workload.
 
 ## Strategic position (research pass, 2026-09-02)
 
