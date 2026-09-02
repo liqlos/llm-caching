@@ -167,6 +167,60 @@ an admission threshold that skips the disk consult when the expected
 recoverable prefix is too small to cover its fixed read cost. Phase M2
 (profit ladder) starts from exactly that lever.
 
+## Phase M2 — profit ladder
+
+### Lever 1: shorter-match admission threshold — kept, insufficient alone
+
+Implemented in the fork (`DiskPromptStore.min_shorter_admission_tokens`,
+default 1500; `native/mlx-patches/0012`): a "shorter" disk match (the
+branch behind all 15 of Gate G1-MLX's small, sub-1x-speedup cold-restart
+recoveries) is only admitted if it is at least this many tokens — "exact"
+and "longer" matches are never gated, since by construction they recover
+at least as much as the query itself.
+
+**Retroactive impact (already-collected Gate G1-MLX receipt, no rerun):**
+computed directly against `raw_results_g1.json`'s 286 paired `ram` /
+`ram_disk` turns — for each of the 24 cold turns, if `ram_disk`'s actual
+`cached_tokens` falls under 1500, substitute that turn's `ram` wall-clock
+(what it would cost with the disk consult skipped) in place of
+`ram_disk`'s actual one, then re-sum all 286 turns. 14 of the 24 cold
+turns fall below the threshold (all in the 310-566 cached-token range,
+the same shared-preamble-only recoveries the mean/median split flagged).
+Result: full-workload improvement moves from the recorded **13.4% to
+14.9%** — real, but nowhere near enough on its own to reach 25%.
+
+**Verdict: keep** (a strict improvement, unit-tested, no measured
+downside) but **not sufficient alone**. Next lever: prefetch/overlap
+(start the disk read during prefill instead of paying it serially before
+generation starts) — reduces the fixed disk-read cost itself rather than
+only skipping turns too small to cover it, so it should also help the 9
+already-profitable large-recovery cold turns that the admission threshold
+cannot touch.
+
+### A methodological limitation found while building the fast-iteration harness
+
+Per `NOW.md`'s iteration-speed rules, a Level 3 cold-turn microbench
+(`src/pcss/mlx_cold_turn_bench.py`) replays pre-registered restart points
+against a disk-store fixture, using an in-process
+`/debug/simulate_restart` endpoint to avoid paying a real ~15-20s model
+reload per restart. Exercising it against a clone of Gate G1-MLX run 3's
+completed 45 GB disk store surfaced a real limitation: session 13 turn
+10, which the live run recorded recovering 4747/5324 tokens (3.14x), came
+back as a near-miss (335 cached tokens) when replayed against the
+fixture. Root cause: the fixture is a single end-of-run disk-store
+snapshot, and the disk store's own LRU eviction — driven by insert
+pressure from sessions after the one being replayed — had aged that
+specific entry out by the time the run finished and flushed, even though
+it was present and hit correctly at the moment it actually mattered live.
+A static fixture is the *final* LRU state, not a time-lapse of every
+restart's own view. This is inherent to the "clone one completed run's
+disk store" methodology, not a code defect — it means fixture-replay
+numbers are only trustworthy for entries still resident at end-of-run,
+and are reliable for *relative* (lever-on vs lever-off, same fixture)
+comparisons but not as an absolute reproduction of a live run's per-
+restart hit pattern. Recorded so future use of this harness accounts for
+it rather than re-discovering it.
+
 ## Relationship to the llama.cpp line
 
 `docs/SSD_L2_CACHE.md` is the frozen authority for the llama.cpp line. Its
