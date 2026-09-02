@@ -1,0 +1,251 @@
+From bc11a5598e70637bd5c3722e5ebb6005c00c44b9 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 13:11:54 +0200
+Subject: [PATCH 15/15] fix: disk search() must find a true common-prefix
+ match, not just whole-key equality
+
+DiskPromptStore.search()'s 'shorter'/'longer' checks required one
+sequence's entire stored length to equal-or-prefix the other exactly.
+This missed the common case in this project's own frozen chat-shaped
+workload: a stored assistant-turn entry is [wrapped user prompt]
+[generated continuation], and the next turn's query extends only the
+user-prompt portion with its own different continuation -- the two
+diverge partway through, well before either one's own full length, even
+though a large, valid, and very usable common prefix exists between
+them.
+
+Confirmed live on M4 (Gate G1-MLX rerun after removing eager
+restore-on-start in the previous commit): a query that should recover
+6553/6896 tokens (matching the original Gate G1-MLX receipt, where RAM's
+own PromptTrie -- which computes a true longest-common-prefix as a
+natural byproduct of walking token-by-token -- found this match)
+recovered 0 via this method against the exact same disk-resident entry,
+because the entry's own stored length (6606) was never reached before
+the two diverged at token 6553. Eager restore's bulk RAM preload routed
+every post-restart lookup through the trie and happened to mask this gap
+for as long as it existed; removing it sent every on_miss lookup through
+this method directly, exposing it.
+
+search()'s 'longer' case now tracks the best true LCP-based trimmable
+candidate (covering both a literal superset and a same-or-shorter
+partial-divergent match); consult_and_promote recomputes and uses that
+real common-prefix depth instead of assuming the query's own full length
+minus one is always safe to trim to. The cost-model admission check now
+also covers this generalized trimmable case (only the recoverable delta
+beyond what RAM already had), not just the old 'shorter' branch, so a
+small partial match still has to clear its own read cost. Live-verified
+against the exact repro (isolated 11-turn session replay): fixed run
+recovers 6553/6896 tokens in 4.46s, versus 0/6896 in 22.5s before this
+fix, matching the original run 3 receipt's 6553-token recovery.
+---
+ mlx_lm/prompt_cache_disk.py     | 117 +++++++++++++++++++++++---------
+ tests/test_prompt_cache_disk.py |  29 ++++++++
+ 2 files changed, 113 insertions(+), 33 deletions(-)
+
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+index 66bc700..bce7723 100644
+--- a/mlx_lm/prompt_cache_disk.py
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -222,12 +222,42 @@ class DiskPromptStore:
+         if n_evicted:
+             self._index = self._index[n_evicted:]
+ 
++    @staticmethod
++    def _common_prefix_len(a: List[int], b: List[int]) -> int:
++        n = min(len(a), len(b))
++        i = 0
++        while i < n and a[i] == b[i]:
++            i += 1
++        return i
++
+     def search(
+         self, model_key, tokens: List[int]
+     ) -> Tuple[Optional[dict], Optional[dict], Optional[dict]]:
+         """Mirrors ``PromptTrie.search``'s exact / shorter / longer
+         semantics, restricted to disk-resident, compatibility-verified
+-        entries for this model."""
++        entries for this model.
++
++        ``longer`` is really "trimmable": any candidate whose content
++        diverges from the query is still usable up to their true longest
++        common prefix (LCP), not only a candidate whose *entire* stored
++        length happens to equal-or-exceed the query. A single whole-key
++        equality check (the original implementation here) missed a common
++        and valuable case in this project's own frozen chat-shaped
++        workload: a stored assistant-turn entry is
++        ``[wrapped user prompt][generated continuation]``, and the next
++        turn's *query* extends only the user-prompt portion, with its own
++        different wrapping/continuation following -- the two diverge
++        partway through, well before either one's own full length. Confirmed
++        live on M4 (Gate G1-MLX rerun after removing eager restore-on-start,
++        see continuous-journal): a query recovering 6553/6896 tokens via
++        RAM's own trie (which computes a true LCP as a natural byproduct of
++        walking token-by-token) recovered 0 via this method's original
++        whole-key check against the exact same disk-resident entry, because
++        the entry's own stored length (6606) was never reached before the
++        two diverged at token 6553. PromptTrie's own ``fetch_nearest_cache``
++        never had this gap; eager restore's bulk RAM preload happened to
++        route every lookup through the trie and masked it -- once removed,
++        every lookup relying on ``on_miss`` hit it directly."""
+         model_key = list(model_key)
+         with self._lock:
+             candidates = [
+@@ -236,16 +266,27 @@ class DiskPromptStore:
+                 if r["model_key"] == model_key and self._is_compatible(r)
+             ]
+         exact = shorter = longer = None
++        longer_cp = 0
+         for row in candidates:
+             row_tokens = row["tokens"]
+             if row_tokens == tokens:
+                 exact = row
+-            elif len(row_tokens) < len(tokens) and tokens[: len(row_tokens)] == row_tokens:
++                continue
++            cp = self._common_prefix_len(row_tokens, tokens)
++            if cp == 0:
++                continue
++            if cp == len(row_tokens) and len(row_tokens) < len(tokens):
++                # The entire row is a genuine prefix of the query; no
++                # trimming needed, just use it as-is and prefill the rest.
+                 if shorter is None or len(row_tokens) > len(shorter["tokens"]):
+                     shorter = row
+-            elif len(row_tokens) > len(tokens) and row_tokens[: len(tokens)] == tokens:
+-                if longer is None or len(row_tokens) < len(longer["tokens"]):
+-                    longer = row
++            elif cp > longer_cp:
++                # Best trimmable candidate seen so far by recoverable
++                # depth, whether row is a superset of the query or the two
++                # simply share a shorter common prefix than either one's
++                # own full length.
++                longer = row
++                longer_cp = cp
+         return exact, shorter, longer
+ 
+     def load(self, row: Dict[str, Any]):
+@@ -281,14 +322,16 @@ class DiskPromptStore:
+                     break
+             self._write_index_locked()
+ 
+-    def _shorter_match_worth_admitting(self, row: Dict[str, Any]) -> bool:
+-        """Cost-model admission: load this "shorter" entry only if the
+-        prefill time it saves is expected to comfortably exceed the time
+-        spent reading it, using this process's own observed prefill and
+-        disk-read throughput (see record_prefill_observation / __init__).
+-        A fixed token-count threshold would need re-tuning on every host,
+-        model, quantization, or disk; this self-calibrates instead."""
+-        recoverable_tokens = len(row["tokens"])
++    def _worth_admitting(self, row: Dict[str, Any], recoverable_tokens: int) -> bool:
++        """Cost-model admission: load this entry only if the prefill time
++        `recoverable_tokens` saves is expected to comfortably exceed the
++        time spent reading the file, using this process's own observed
++        prefill and disk-read throughput (see record_prefill_observation /
++        __init__). Applies to any small recovery regardless of which
++        branch it came from ("shorter", or a "longer"/trimmable candidate
++        whose common prefix with the query happens to be small) -- a fixed
++        token-count threshold would need re-tuning on every host, model,
++        quantization, or disk; this self-calibrates instead."""
+         est_save_s = recoverable_tokens / self.prefill_tokens_per_sec
+         est_read_s = (row["n_bytes"] / 1e6) / self.disk_mb_per_sec
+         return est_save_s >= est_read_s * self.admission_safety_factor
+@@ -319,30 +362,38 @@ class DiskPromptStore:
+                 return cache, []
+ 
+         if longer is not None:
+-            cache = self.load(longer)
+-            if cache is not None and can_trim_prompt_cache(cache):
+-                self.touch(longer)
+-                promote_into.insert_cache(
+-                    model_key,
+-                    longer["tokens"],
+-                    copy.deepcopy(cache),
+-                    cache_type=longer["cache_type"],
+-                )
+-                # Mirrors PromptTrie's own longer-trim branch: always leave
+-                # at least the last token unconsumed. Trimming all the way
+-                # to a zero-length rest crashes downstream segment handling
+-                # (observed live on M4: IndexError in generate.py on an
+-                # empty final segment) -- upstream's RAM path never produces
+-                # rest=[] here for exactly this reason.
+-                prefix = len(tokens) - 1
+-                num_to_trim = len(longer["tokens"]) - prefix
+-                trim_prompt_cache(cache, num_to_trim)
+-                return cache, tokens[prefix:]
++            # Recompute the true common-prefix depth: `longer` may be a
++            # literal superset of `tokens`, or may just share a shorter
++            # common prefix that diverges before either sequence's own
++            # full length (see search()'s docstring). Either way this is
++            # the deepest prefix this row can safely serve.
++            common_prefix = self._common_prefix_len(longer["tokens"], tokens)
++            # Mirrors PromptTrie's own longer-trim branch: always leave at
++            # least the last queried token unconsumed. Trimming all the way
++            # to a zero-length rest crashes downstream segment handling
++            # (observed live on M4: IndexError in generate.py on an empty
++            # final segment) -- upstream's RAM path never produces rest=[]
++            # here for exactly this reason.
++            prefix = min(len(tokens) - 1, common_prefix)
++            recoverable = prefix - ram_reuse
++            if prefix > max(ram_reuse, 0) and self._worth_admitting(longer, recoverable):
++                cache = self.load(longer)
++                if cache is not None and can_trim_prompt_cache(cache):
++                    self.touch(longer)
++                    promote_into.insert_cache(
++                        model_key,
++                        longer["tokens"],
++                        copy.deepcopy(cache),
++                        cache_type=longer["cache_type"],
++                    )
++                    num_to_trim = len(longer["tokens"]) - prefix
++                    trim_prompt_cache(cache, num_to_trim)
++                    return cache, tokens[prefix:]
+ 
+         if (
+             shorter is not None
+             and len(shorter["tokens"]) > ram_reuse
+-            and self._shorter_match_worth_admitting(shorter)
++            and self._worth_admitting(shorter, len(shorter["tokens"]) - ram_reuse)
+         ):
+             cache = self.load(shorter)
+             if cache is not None:
+diff --git a/tests/test_prompt_cache_disk.py b/tests/test_prompt_cache_disk.py
+index 9611e51..60d3453 100644
+--- a/tests/test_prompt_cache_disk.py
++++ b/tests/test_prompt_cache_disk.py
+@@ -216,6 +216,35 @@ class TestDiskPromptStore(unittest.TestCase):
+         ram_cache, ram_rest = lru.fetch_nearest_cache(model_key, full)
+         self.assertEqual(ram_rest, [])
+ 
++    def test_ram_miss_consults_disk_partial_divergent_prefix(self):
++        """Gate G1-MLX (live M4 data, discovered after removing eager
++        restore-on-start): a stored entry and a later query can diverge
++        *before* either one's own full length -- e.g. a stored assistant
++        turn is [wrapped user prompt][generated continuation], and the
++        next turn's query extends only the user-prompt portion with its
++        own different continuation. Neither the old "shorter" (row fully
++        consumed) nor "longer" (query fully consumed) whole-key-equality
++        check recognizes this as usable, even though a large, valid common
++        prefix exists. This must be found and trimmed to the true common
++        prefix, exactly as RAM's own trie already does."""
++        store = self.make_store(admission_safety_factor=0.0)
++        model_key = ("model-a", None, None)
++        shared_prefix = list(range(100))
++        stored = shared_prefix + [999, 998, 997]  # diverges after the shared prefix
++        store.put(
++            model_key, stored, LRUPromptCache.CacheEntry(make_cache(len(stored)), 100, "assistant")
++        )
++
++        query = shared_prefix + [1, 2, 3, 4, 5]  # same shared prefix, different continuation
++        lru = LRUPromptCache(
++            max_size=10,
++            on_miss=lambda m, t, rc, rr: store.consult_and_promote(m, t, rc, rr, lru),
++        )
++        cache, rest = lru.fetch_nearest_cache(model_key, query)
++        self.assertIsNotNone(cache)
++        self.assertEqual(rest, query[len(shared_prefix):])
++        self.assertEqual(cache[0].offset, len(shared_prefix))
++
+     def test_ram_miss_consults_disk_shorter_only_if_better_than_ram(self):
+         # admission_safety_factor=0 makes the cost model admit any
+         # non-empty shorter match, isolating the "better than RAM's own
+-- 
+2.46.0
+
