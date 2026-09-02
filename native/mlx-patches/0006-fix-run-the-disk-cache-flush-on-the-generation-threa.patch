@@ -1,0 +1,58 @@
+From aadf41eac19599ae748adbc714ddb5d4cccae204 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 02:41:13 +0200
+Subject: [PATCH 6/6] fix: run the disk-cache flush on the generation thread,
+ not the HTTP thread
+
+Live-tested on M4: SIGTERM produced a 0-byte .safetensors file and no
+index.json. The actual error (now visible after the previous commit added
+logging instead of swallowing it): "RuntimeError: There is no Stream(gpu,
+0) in current thread." MLX binds a GPU stream per thread; the generation
+thread sets one up at the top of _generate(), but the HTTP server's main
+thread -- where the SIGTERM/KeyboardInterrupt handler ran the flush --
+never does.
+
+Moves the flush to run at the end of _generate()'s loop instead, on the
+same thread that already does all the model's MLX work (and already runs
+_serve_single's insert_cache calls). _run_http_server's shutdown path goes
+back to just stop_and_join(), which blocks until that thread -- flush
+included -- returns.
+---
+ mlx_lm/server.py | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index 863eeb9..fff90d6 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -886,6 +886,13 @@ class ResponseGenerator:
+                         # generation
+                         batch_results.pop(uid, None)
+ 
++        # Flush the RAM cache to disk on this thread: it is the one with an
++        # MLX GPU stream bound to it, unlike the HTTP server's main thread.
++        if self.disk_store is not None:
++            for model, tokens, entry in self.prompt_cache.all_entries():
++                self.disk_store.put(model, tokens, entry)
++            self.disk_store.close()
++
+     def _serve_single(self, request):
+         rqueue, request, args = request
+ 
+@@ -1727,11 +1734,9 @@ def _run_http_server(
+         httpd.serve_forever()
+     except KeyboardInterrupt:
+         httpd.shutdown()
++        # stop_and_join() joins the generation thread, which performs the
++        # disk-cache flush itself (see _generate) before it returns.
+         response_generator.stop_and_join()
+-        if response_generator.disk_store is not None:
+-            for model, tokens, entry in response_generator.prompt_cache.all_entries():
+-                response_generator.disk_store.put(model, tokens, entry)
+-            response_generator.disk_store.close()
+ 
+ 
+ def run(
+-- 
+2.46.0
+
