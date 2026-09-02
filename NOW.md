@@ -6,6 +6,24 @@ in the tree (`PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `qualification/`, the
 `llamacpp_*` / `exact_prompt_*` / `live_server_*` lab modules) is historical
 prior art and binds nothing.
 
+## Status (2026-09-02, marathon in progress)
+
+D0b (arm 1, `Qwen3-8B-8bit`) is running on M4, background, ETA several hours — do not
+wait on it or restart it; check `artifacts/mlx/20260902T152845Z-phase-d0-marathon/
+JOURNAL.md` (local-only, not in git) for the live state and every detail below. While it
+runs: `run_d0b.py` gained `--resume` and `--reuse-prompt-cache` (for the second arm,
+`Qwen3.8-27B-4bit` — not applied to the running arm). Phase D1's MVP (`GlobalDatastore`,
+the `E[accepted]+1 > c(width)` gate, per-round logging) landed on the fork
+(`liqlos/mlx-dspark`, submodule bumped) with 27 passing tests. A first exactness-gate run
+(rung 3 of the ladder, 0.5B model) found 1/12 checks diverging from plain greedy at
+width 8 — reproduces identically with the datastore disabled, so it is NOT a D1 bug, but
+Phase D1 step 4 ("any divergence stops the line") is not yet cleared as written: the next
+session should re-run the gate at a larger sample against the real D0 target and report a
+token-identity rate before trusting any G1-D throughput number. See the journal's
+"Overlap work while D0b runs" entry for the full detail, including a scoring-alignment bug
+found (and fixed, in the fork only — D0a's own copy was deliberately left untouched) while
+porting D0a's match-scoring algorithm into the datastore.
+
 ## Scope decision (owner, 2026-09-02)
 
 **Not prefix / prefill KV caching** — oMLX ships it; see
