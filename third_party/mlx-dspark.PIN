@@ -1,0 +1,16 @@
+fork=https://github.com/liqlos/mlx-dspark.git
+upstream=https://github.com/ARahim3/mlx-dspark.git
+revision=d2719285af03e875efbb540c459c5971947ac015
+
+# `revision` is the upstream base: ARahim3/mlx-dspark `main` as of 2026-09-02.
+# The submodule tracks the private-intent fork's `main` (GitHub would not
+# let a fork of a public repo go private without an interactive
+# `delete_repo`-scoped token grant we did not have during the marathon
+# session that created it on 2026-09-02; the fork therefore stayed public — no
+# secrets or corpus data are pushed there, only MIT-licensed engine code
+# and patches, so this was accepted rather than blocking on the owner).
+# Phase D1 work (the datastore drafter, extending `src/mlx_dspark/lookup.py`)
+# lands as commits on the fork's `main`, mirrored as
+# `native/mlx-dspark-patches/*.patch` per NOW.md. Bump `revision` to a
+# newer upstream SHA whenever our commits rebase cleanly onto it; record the
+# bump in the run journal per NOW.md.

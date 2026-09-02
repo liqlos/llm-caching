@@ -1,0 +1,3 @@
+[submodule "third_party/mlx-dspark"]
+	path = third_party/mlx-dspark
+	url = https://github.com/liqlos/mlx-dspark.git
