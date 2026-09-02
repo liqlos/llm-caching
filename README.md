@@ -21,8 +21,14 @@ the two prefix-cache lines this project built, measured, and retired.
 
 ## Layout
 
-- `src/pcss/` — the laboratory (Python), prior art kept for Line D:
-  datastore admission/eviction simulation (`adaptive_datastore*`), a
+All of the below is now historical: it was written for Line D while it was
+open, and Line D closed 2026-09-03 (see `docs/CLOSED_LINES.md`). Kept for
+reference and because the underlying techniques (offline replay, receipts,
+admission/eviction simulation) may be reusable by a future, separately
+scoped line — none of it is a live plan.
+
+- `src/pcss/` — the laboratory (Python), Line D prior art: datastore
+  admission/eviction simulation (`adaptive_datastore*`), a
   crash-recoverable checksummed disk store (`persistent_store`), byte
   accounting (`capacity`), model-free chronological replay and offline
   metrics (`replay`, `metrics`, `experiments`, `state_machine_simulator`,
@@ -30,7 +36,7 @@ the two prefix-cache lines this project built, measured, and retired.
   `importer`, `trace`, `manifest`, `canonical`, `results`), and workload
   sealing (`project_workload_capture`, `project_capture_proxy`).
 - `tests/`, `scripts/check.sh` — lab checks (`ruff` + `pytest`).
-- `docs/research/` — research memos behind `NOW.md`'s strategy.
+- `docs/research/` — research memos behind Line D's now-closed strategy.
 - `qualification/`, `fixtures/`, `schemas/`, `PCSS_PRODUCT.md`,
   `M4_RUNBOOK.md` — historical PCSS evidence and protocols; bind nothing.
 - `artifacts/` — run roots and receipts (mostly untracked, on the owner's
