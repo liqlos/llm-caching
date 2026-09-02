@@ -180,10 +180,19 @@ per-request lookup that already exists. Measure that before building.
 2. **D0b — real-model outputs (hours, M4, background).** Generate full
    responses with the D0 model (greedy) on corpus prompts in session
    order; global tree learned from sessions 1..k, measured on k+1; same
-   metrics. This is the number that counts.
+   metrics. Reuse ArcticInference's `simulator.py` (exact greedy
+   acceptance simulation) rather than writing one. Also record the tree's
+   measured bytes/token per project and a datastore-size curve (truncate
+   training sessions) — the paper says gain keeps rising with history;
+   verify it here. This is the number that counts.
 3. **D0c — verify-cost curve (10 min, M4).** Measure the D0 model's
-   verify cost vs width 1..32 on this host (or read mlx-dspark's cached
-   curve) so tokens/pass converts to wall-clock honestly.
+   verify cost vs width 1..32 on this host as a dependent chain with
+   rotated weights (not independent calls), or read mlx-dspark's cached
+   curve, so tokens/pass converts to wall-clock honestly.
+4. **D0 model choice:** default `Qwen3-8B-8bit` (best ratio on this
+   host); the owner's stated daily model `Qwen3.8-27B-4bit` is the second
+   arm once the pipeline works — its long-context width cliff at 6 must be
+   in the cost curve.
 
 **Gate D0 (pre-registered):** global (c) must beat per-request (a) by
 ≥ 20% in projected wall-clock at the best width on D0b, and (c) must
