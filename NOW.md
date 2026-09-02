@@ -201,6 +201,38 @@ the server's `system_fingerprint`.
 
 ## Iteration speed rules (binding — a full 3-arm run is ~2.5 h, most of it waste)
 
+The default development loop must take minutes, not tens of minutes.
+Multi-hour full-workload runs are for final receipts only, run in the
+background while the next item is being worked on. Use this ladder of
+loops, cheapest first, and go up a level only when the level below passes:
+
+1. **Unit tests (seconds).** Every mechanism change ships with a test in
+   `third_party/mlx-lm/tests/`; synthetic caches, no model.
+2. **Tiny-model stress (1-2 min, M4).** Correctness and robustness of the
+   disk tier — file races, thread streams, budget bounds, quota eviction,
+   restart recovery — do not depend on model quality. Use a small MLX
+   model (e.g. `mlx-community/Qwen2.5-0.5B-Instruct-4bit`: ~1 s load,
+   instant prefill) with synthetic long prompts, a small RAM budget, many
+   restarts, and eviction on every insert. All three Phase M1 scale bugs
+   are reachable here in under two minutes. Build this harness once
+   (`src/pcss/mlx_stress.py` or similar) and run it before every push.
+3. **Cold-turn microbench on a store fixture (2-5 min, real model).**
+   Build the disk store for the frozen workload once and keep it as a
+   fixture; clone it per iteration (APFS `cp -c` is instant). Add a
+   diagnostic-only server endpoint / flag that drops the RAM tier and
+   reopens the disk index in-process ("simulated restart") so the 24
+   post-restart cold turns cost 24 requests, not 24 x 20 s model reloads.
+   Measure TTFT (streaming, `max_tokens=1`), not 48 decode tokens: the
+   cache only affects prefill, decode is noise for this question. This is
+   the loop for ladder levers and restore-path work. Diagnostic config —
+   never gate evidence on its own.
+4. **Screen on the real model, real restarts, subset (~10 min).**
+   Pre-registered subset (e.g. 4 sessions, 8 restart points), `ram_disk`
+   only, against stored reference arms. Levers that fail here are
+   discarded without a full run.
+5. **Full receipt (hours, background, rare).** Only to confirm a GO or to
+   record the cumulative ladder result; never to discover bugs.
+
 - **Do not re-run control arms whose code path did not change.** `no_cache`
   and `ram` are measured once per (workload, PIN, non-disk patch set) and
   reused as the reference for every `ram_disk` iteration; record the
