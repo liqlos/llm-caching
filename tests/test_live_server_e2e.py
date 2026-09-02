@@ -233,18 +233,3 @@ def test_store_snapshot_detects_content_change(tmp_path: Path) -> None:
     record.write_bytes(b"two")
     after = e2e._store_snapshot(store)
     assert before["tree_sha256"] != after["tree_sha256"]
-
-
-def test_wrapper_is_executable_and_forwards_all_explicit_provenance_inputs() -> None:
-    script = Path(__file__).parents[1] / "scripts" / "real-model-check.sh"
-    text = script.read_text(encoding="utf-8")
-    assert os.access(script, os.X_OK)
-    for name in (
-        "PCSS_SERVER",
-        "PCSS_MODEL",
-        "PCSS_MODEL_SHA256",
-        "PCSS_PATCH_SHA256",
-        "PCSS_RESULT",
-    ):
-        assert name in text
-    assert "pcss.live_server_e2e" in text

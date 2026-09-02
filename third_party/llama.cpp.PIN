@@ -1,8 +1,0 @@
-fork=https://github.com/liqlos/llama.cpp.git
-upstream=https://github.com/ggml-org/llama.cpp.git
-revision=9723942adc518b43c4b95dc4dce6906903eb5e09
-
-# `revision` is the upstream base.  The submodule tracks the private fork's
-# `main`, whose history is exactly `revision` plus the commits mirrored as
-# native/patches/*.patch.  The build scripts and documentation must use this
-# submodule, never a system/Homebrew llama.cpp installation.

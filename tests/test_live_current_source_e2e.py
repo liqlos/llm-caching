@@ -234,19 +234,3 @@ def test_run_writes_immutable_redacted_claim_bounded_receipt(
     assert "source_id" not in text
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         e2e.run_qualification(config)
-
-
-def test_wrapper_is_executable_and_binds_provenance_inputs() -> None:
-    script = Path(__file__).parents[1] / "scripts" / "real-source-check.sh"
-    text = script.read_text(encoding="utf-8")
-    assert os.access(script, os.X_OK)
-    for name in (
-        "PCSS_SERVER",
-        "PCSS_MODEL",
-        "PCSS_MODEL_SHA256",
-        "PCSS_PATCH_SHA256",
-        "PCSS_CURRENT_SOURCE_POLICY",
-        "PCSS_SOURCE_RESULT",
-    ):
-        assert name in text
-    assert "pcss.live_current_source_e2e" in text

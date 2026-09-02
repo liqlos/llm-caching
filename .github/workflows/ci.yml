@@ -1,4 +1,4 @@
-name: PCSS checks
+name: checks
 
 on:
   push:
@@ -9,32 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt -e .
       - run: bash scripts/check.sh
-
-  native:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
-      - run: bash scripts/native-check.sh
-      - run: ctest --test-dir build/llama.cpp -R '^test-pcss-store$' --output-on-failure
-      - name: ASan and UBSan PCSS store/provider
-        run: |
-          cmake -S third_party/llama.cpp -B build/llama.cpp-sanitize \
-            -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TESTS=ON \
-            -DLLAMA_BUILD_UI=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DGGML_METAL=OFF -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
-            -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
-            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
-          cmake --build build/llama.cpp-sanitize --target test-pcss-store --parallel 2
-          ASAN_OPTIONS=detect_leaks=1 build/llama.cpp-sanitize/bin/test-pcss-store

@@ -1104,10 +1104,3 @@ def test_exact_output_gate_can_keep_an_unsafe_reporting_comparator_nonrequired()
     assert gate["passed"] is True
     assert gate["comparisons"][0]["required"] is False
     assert gate["comparisons"][0]["passed"] is False
-
-
-def test_benchmark_script_requires_all_explicit_inputs() -> None:
-    script = Path(__file__).parents[1] / "scripts" / "benchmark.sh"
-    completed = subprocess.run(("bash", str(script)), capture_output=True, text=True, check=False)
-    assert completed.returncode == 2
-    assert "MANIFEST.json WORKLOAD.json MODEL.gguf OUTPUT_DIRECTORY" in completed.stderr

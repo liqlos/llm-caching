@@ -2,7 +2,7 @@
 
 > **HISTORICAL / ARCHIVE-ONLY:** The entire file records the 20260831 PCSS
 > sequence line. It is never a current instruction. For the current path and
-> claim boundary, use `docs/SSD_L2_CACHE.md` and `NOW.md`.
+> claim boundary, use `NOW.md` and `docs/CLOSED_LINES.md`.
 
 This is the target correctness, isolated verifier-profile, controlled
 live-decode, and edit-protocol procedure for one fixed Qwen3-8B GGUF

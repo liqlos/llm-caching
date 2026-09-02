@@ -4,7 +4,7 @@
 > from the 20260831 PCSS sequence line. Every product path, command, `current`,
 > `immutable`, `final`, default, and manifest requirement below is bounded to
 > that historical line and is never a current instruction or next action. Use
-> `docs/SSD_L2_CACHE.md` as the sole current-state authority and `NOW.md` for the
+> `NOW.md` for the current line and `docs/CLOSED_LINES.md` for the
 > ordered continuation boundary.
 
 For the 20260831 sequence line, the product executable was the pinned
