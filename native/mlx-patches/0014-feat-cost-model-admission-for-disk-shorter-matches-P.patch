@@ -1,0 +1,330 @@
+From 7c043f488b68c9a033cad21a394ec8598378475a Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 12:32:35 +0200
+Subject: [PATCH 14/14] feat: cost-model admission for disk 'shorter' matches
+ (Phase M2 lever 1, revised)
+
+Replaces the fixed 1500-token admission constant with online EWMA
+estimates of this process's own prefill tokens/s (timed from the
+progress callback, prefill only, excludes decode) and disk read MB/s
+(timed inside DiskPromptStore.load()). A 'shorter' match is admitted
+only when its estimated prefill-time savings clear its estimated
+read-time cost by a configurable safety factor
+(--prompt-cache-disk-admission-safety-factor, default 1.5). A fixed
+token count's break-even point is itself a function of host/model/disk
+speed, so it silently stops being correct anywhere else; this
+self-calibrates from observed traffic instead.
+---
+ mlx_lm/prompt_cache_disk.py     | 81 +++++++++++++++++++++++++++------
+ mlx_lm/server.py                | 37 +++++++++++----
+ tests/test_prompt_cache_disk.py | 58 +++++++++++++++++------
+ 3 files changed, 137 insertions(+), 39 deletions(-)
+
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+index a41e2ee..66bc700 100644
+--- a/mlx_lm/prompt_cache_disk.py
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -38,7 +38,10 @@ class DiskPromptStore:
+         mlx_version: str,
+         mlx_lm_version: str,
+         system_fingerprint: str,
+-        min_shorter_admission_tokens: int = 1500,
++        admission_safety_factor: float = 1.5,
++        init_prefill_tokens_per_sec: float = 300.0,
++        init_disk_mb_per_sec: float = 300.0,
++        ewma_alpha: float = 0.3,
+     ):
+         self.dir = Path(directory)
+         self.dir.mkdir(parents=True, exist_ok=True)
+@@ -46,19 +49,29 @@ class DiskPromptStore:
+         self.mlx_version = mlx_version
+         self.mlx_lm_version = mlx_lm_version
+         self.system_fingerprint = system_fingerprint
+-        # Admission threshold for the "shorter" branch only (see
+-        # consult_and_promote): a fixed disk-read-and-checksum cost
+-        # (~1.5-2.5s, measured live on M4) isn't reliably covered by a
+-        # small reused prefix. Gate G1-MLX's post-restart cold turns split
+-        # cleanly on this: 9 restarts recovering 3,000-11,000+ tokens (all
+-        # "exact"/"longer" hits, inherently large) were 3-6x faster; 15
+-        # recovering ~300-600 tokens via a "shorter" hit (a small shared
+-        # preamble in an otherwise-fresh conversation) were 0.6-1.1x -- a
+-        # net loss on most of them. "exact" and "longer" matches are not
++        # Cost-model admission for the "shorter" branch only (see
++        # consult_and_promote): a disk-read-and-checksum cost that scales
++        # with entry size (whole-state file, full-file sha256, monolithic
++        # read) isn't always covered by the tokens it saves re-prefilling.
++        # Gate G1-MLX's post-restart cold turns split on exactly this: 9
++        # restarts recovering 3,000-11,000+ tokens (all "exact"/"longer"
++        # hits, inherently large) were 3-6x faster; 15 recovering ~300-600
++        # tokens via a "shorter" hit (a small shared preamble in an
++        # otherwise-fresh conversation) were 0.6-1.1x -- a net loss on most
++        # of them. Replaces an earlier fixed 1500-token constant: that
++        # constant's break-even point is itself a function of this host's
++        # prefill speed and disk speed, so a fixed number silently stops
++        # being correct on a different host, model, quantization, or disk.
++        # Online EWMA estimates of both rates, updated from this process's
++        # own observed requests and loads, make the break-even point
++        # self-calibrating instead. "exact" and "longer" matches are not
+         # gated: by construction the query itself must be at least as long
+         # as the disk entry, so they never fall in the small-recovery
+-        # regime that motivated this threshold.
+-        self.min_shorter_admission_tokens = min_shorter_admission_tokens
++        # regime this model addresses.
++        self.admission_safety_factor = admission_safety_factor
++        self._ewma_alpha = ewma_alpha
++        self.prefill_tokens_per_sec = init_prefill_tokens_per_sec
++        self.disk_mb_per_sec = init_disk_mb_per_sec
+         self._index_path = self.dir / "index.json"
+         self._lock = threading.Lock()
+         self._index: List[Dict[str, Any]] = self._read_index()
+@@ -68,6 +81,30 @@ class DiskPromptStore:
+         )
+         self._writer_thread.start()
+ 
++    def record_prefill_observation(self, n_tokens: int, wall_s: float):
++        """Feed one observed prefill's throughput into the EWMA the cost-
++        model admission check uses. Called by the server after a request's
++        prefill completes, timed from immediately before generation starts
++        to the last prompt_progress_callback invocation -- decode time is
++        not included, since decode throughput is irrelevant to whether a
++        disk consult (which only ever saves prefill work) is worth it."""
++        if n_tokens <= 0 or wall_s <= 0:
++            return
++        observed = n_tokens / wall_s
++        self.prefill_tokens_per_sec = (
++            self._ewma_alpha * observed
++            + (1 - self._ewma_alpha) * self.prefill_tokens_per_sec
++        )
++
++    def _record_disk_read_observation(self, n_bytes: int, wall_s: float):
++        if n_bytes <= 0 or wall_s <= 0:
++            return
++        observed_mb_s = (n_bytes / 1e6) / wall_s
++        self.disk_mb_per_sec = (
++            self._ewma_alpha * observed_mb_s
++            + (1 - self._ewma_alpha) * self.disk_mb_per_sec
++        )
++
+     def _writer_loop(self):
+         # MLX binds a compute stream per thread; a freshly spawned thread
+         # has none until this is called (matches what _generate() does at
+@@ -215,8 +252,10 @@ class DiskPromptStore:
+         path = self.dir / f"{row['id']}.safetensors"
+         if not path.exists():
+             return None
++        t0 = time.monotonic()
+         try:
+-            if hashlib.sha256(path.read_bytes()).hexdigest() != row["checksum"]:
++            raw = path.read_bytes()
++            if hashlib.sha256(raw).hexdigest() != row["checksum"]:
+                 logging.warning("DiskPromptStore.load: checksum mismatch for %s", path)
+                 return None
+             cache = load_prompt_cache(str(path))
+@@ -231,6 +270,8 @@ class DiskPromptStore:
+         except Exception:
+             logging.exception("DiskPromptStore.load: failed to read %s", path)
+             return None
++        finally:
++            self._record_disk_read_observation(row.get("n_bytes", 0), time.monotonic() - t0)
+ 
+     def touch(self, row: Dict[str, Any]):
+         with self._lock:
+@@ -240,6 +281,18 @@ class DiskPromptStore:
+                     break
+             self._write_index_locked()
+ 
++    def _shorter_match_worth_admitting(self, row: Dict[str, Any]) -> bool:
++        """Cost-model admission: load this "shorter" entry only if the
++        prefill time it saves is expected to comfortably exceed the time
++        spent reading it, using this process's own observed prefill and
++        disk-read throughput (see record_prefill_observation / __init__).
++        A fixed token-count threshold would need re-tuning on every host,
++        model, quantization, or disk; this self-calibrates instead."""
++        recoverable_tokens = len(row["tokens"])
++        est_save_s = recoverable_tokens / self.prefill_tokens_per_sec
++        est_read_s = (row["n_bytes"] / 1e6) / self.disk_mb_per_sec
++        return est_save_s >= est_read_s * self.admission_safety_factor
++
+     def consult_and_promote(
+         self,
+         model_key,
+@@ -289,7 +342,7 @@ class DiskPromptStore:
+         if (
+             shorter is not None
+             and len(shorter["tokens"]) > ram_reuse
+-            and len(shorter["tokens"]) >= self.min_shorter_admission_tokens
++            and self._shorter_match_worth_admitting(shorter)
+         ):
+             cache = self.load(shorter)
+             if cache is not None:
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index ebb3958..817ba14 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -928,9 +928,24 @@ class ResponseGenerator:
+     def _serve_single(self, request):
+         rqueue, request, args = request
+ 
+-        # Define the progress callback
++        # Define the progress callback. Also times prefill (progress()
++        # only fires during the prefill phase, never during decode) to
++        # feed the disk tier's cost-model admission check its own observed
++        # prefill throughput -- see DiskPromptStore.record_prefill_observation.
++        # prefill_start is set right before stream_generate() is invoked
++        # below, once fetch_nearest_cache has already resolved `rest`.
++        prefill_start = None
++
+         def progress(tokens_processed, tokens_total):
+             rqueue.put((tokens_processed, tokens_total))
++            if (
++                self.disk_store is not None
++                and prefill_start is not None
++                and tokens_processed >= tokens_total
++            ):
++                self.disk_store.record_prefill_observation(
++                    tokens_total, time.monotonic() - prefill_start
++                )
+ 
+         try:
+             # Load the model and tokenizer
+@@ -979,6 +994,7 @@ class ResponseGenerator:
+ 
+             # Process the prompt and generate tokens
+             stop_state = stop_matcher.make_state()
++            prefill_start = time.monotonic()
+             for gen in stream_generate(
+                 model=model,
+                 tokenizer=tokenizer,
+@@ -1816,7 +1832,7 @@ def run(
+             mx.__version__,
+             __version__,
+             get_system_fingerprint(),
+-            min_shorter_admission_tokens=model_provider.cli_args.prompt_cache_disk_min_admission_tokens,
++            admission_safety_factor=model_provider.cli_args.prompt_cache_disk_admission_safety_factor,
+         )
+         prompt_cache.on_evict = disk_store.put_async
+         prompt_cache.on_miss = (
+@@ -1977,14 +1993,15 @@ def main():
+         "(only used with --prompt-cache-dir)",
+     )
+     parser.add_argument(
+-        "--prompt-cache-disk-min-admission-tokens",
+-        type=int,
+-        default=1500,
+-        help="Minimum reused-prefix length (in tokens) for a disk "
+-        "'shorter' match to be worth its fixed read cost; smaller matches "
+-        "are skipped rather than loaded. Does not gate exact/longer "
+-        "matches, which are never this small. (only used with "
+-        "--prompt-cache-dir)",
++        "--prompt-cache-disk-admission-safety-factor",
++        type=float,
++        default=1.5,
++        help="A disk 'shorter' match is only loaded if its estimated "
++        "prefill-time savings exceed its estimated read time by at least "
++        "this factor, using online EWMA estimates of this process's own "
++        "prefill tokens/s and disk read MB/s. Does not gate exact/longer "
++        "matches, which always recover at least as much as the query "
++        "needs. (only used with --prompt-cache-dir)",
+     )
+     parser.add_argument(
+         "--pipeline",
+diff --git a/tests/test_prompt_cache_disk.py b/tests/test_prompt_cache_disk.py
+index 1483a63..9611e51 100644
+--- a/tests/test_prompt_cache_disk.py
++++ b/tests/test_prompt_cache_disk.py
+@@ -217,9 +217,10 @@ class TestDiskPromptStore(unittest.TestCase):
+         self.assertEqual(ram_rest, [])
+ 
+     def test_ram_miss_consults_disk_shorter_only_if_better_than_ram(self):
+-        # min_shorter_admission_tokens=0 isolates the "better than RAM's
+-        # own reuse" logic from the separate admission-threshold test below.
+-        store = self.make_store(min_shorter_admission_tokens=0)
++        # admission_safety_factor=0 makes the cost model admit any
++        # non-empty shorter match, isolating the "better than RAM's own
++        # reuse" logic from the separate cost-model admission test below.
++        store = self.make_store(admission_safety_factor=0.0)
+         model_key = ("model-a", None, None)
+         store.put(
+             model_key, [1, 2, 3], LRUPromptCache.CacheEntry(make_cache(3), 100, "assistant")
+@@ -239,39 +240,66 @@ class TestDiskPromptStore(unittest.TestCase):
+         exact_cache, exact_rest = lru.fetch_nearest_cache(model_key, [1, 2, 3])
+         self.assertEqual(exact_rest, [])
+ 
+-    def test_shorter_admission_threshold_skips_a_small_reused_prefix(self):
++    def test_cost_model_admission_skips_a_small_reused_prefix_behind_a_big_file(self):
+         """Gate G1-MLX (live M4 data): a 'shorter' disk match recovering
+-        only a few hundred tokens costs more in fixed disk-read overhead
+-        than it saves. Below the threshold, on_miss must return None and
+-        leave the RAM answer untouched -- not load anything from disk."""
+-        store = self.make_store(min_shorter_admission_tokens=1500)
++        only a few hundred tokens costs more in disk-read time than it
++        saves in prefill time when the entry is large relative to what it
++        recovers. Below break-even, on_miss must return None and leave
++        the RAM answer untouched -- not load anything from disk."""
++        # Defaults: 300 tok/s prefill, 300 MB/s disk, 1.5x safety factor.
++        # 300 tokens saves ~1.0s of prefill; a 500 MB entry costs ~1.67s to
++        # read -- 1.0 < 1.67*1.5, so this is rejected.
++        store = self.make_store()
+         model_key = ("model-a", None, None)
+-        short_tokens = list(range(300))  # well under the threshold
++        short_tokens = list(range(300))
+         store.put(
+             model_key,
+             short_tokens,
+-            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 100, "assistant"),
++            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 500_000_000, "assistant"),
+         )
+ 
+         query = short_tokens + list(range(1000, 1700))
+         result = store.consult_and_promote(model_key, query, None, query, promote_into=None)
+         self.assertIsNone(result)
+ 
+-        # A "shorter" match at or above the threshold is still admitted.
+-        store2 = self.make_store(min_shorter_admission_tokens=200)
++        # The same 300 recoverable tokens behind a small (10 MB, ~0.033s
++        # read) file clears break-even (1.0 >= 0.033*1.5) and is admitted.
++        # A different model_key keeps this entry's id from colliding with
++        # the 500 MB one above (both stores share setUp's tmp directory).
++        store2 = self.make_store()
++        model_key_b = ("model-b", None, None)
+         store2.put(
+-            model_key,
++            model_key_b,
+             short_tokens,
+-            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 100, "assistant"),
++            LRUPromptCache.CacheEntry(make_cache(len(short_tokens)), 10_000_000, "assistant"),
+         )
+         lru = LRUPromptCache(
+             max_size=10,
+             on_miss=lambda m, t, rc, rr: store2.consult_and_promote(m, t, rc, rr, lru),
+         )
+-        cache, rest = lru.fetch_nearest_cache(model_key, query)
++        cache, rest = lru.fetch_nearest_cache(model_key_b, query)
+         self.assertIsNotNone(cache)
+         self.assertEqual(rest, query[len(short_tokens):])
+ 
++    def test_prefill_and_disk_read_observations_move_the_ewma_estimates(self):
++        store = self.make_store()
++        default_prefill = store.prefill_tokens_per_sec
++        default_disk = store.disk_mb_per_sec
++
++        store.record_prefill_observation(1000, 1.0)  # 1000 tok/s observed
++        self.assertGreater(store.prefill_tokens_per_sec, default_prefill)
++
++        model_key = ("model-a", None, None)
++        tokens = [1, 2, 3]
++        store.put(
++            model_key,
++            tokens,
++            LRUPromptCache.CacheEntry(make_cache(3), 300_000_000, "assistant"),
++        )
++        row = store.search(model_key, tokens)[0]
++        store.load(row)  # a real (tiny) file read at an artificially huge declared size
++        self.assertNotEqual(store.disk_mb_per_sec, default_disk)
++
+     def test_ram_exact_hit_never_calls_on_miss(self):
+         def boom(*args, **kwargs):
+             raise AssertionError("on_miss must not be called on a RAM exact hit")
+-- 
+2.46.0
+
