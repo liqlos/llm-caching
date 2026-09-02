@@ -291,6 +291,46 @@ host's measured verify-cost curve.
 Never re-run a control arm whose code path did not change; never wait
 idle on a run.
 
+## Marathon execution protocol (binding for long autonomous sessions)
+
+The owner is not available during a marathon. Optimise for wall-clock:
+the M4 must never sit idle while the agent thinks, and the agent must
+never wait on the M4.
+
+1. **First 15 minutes — start everything slow, in the background, on
+   M4:** `git pull`; create the private fork `liqlos/mlx-dspark` and
+   install it editable in a venv; download `mlx-community/Qwen3-8B-8bit`,
+   `Qwen3.8-27B-4bit` and the matching DFlash 2 / DSpark drafters; run
+   mlx-dspark's own first-run cost calibration; kick off the D0c verify
+   curve. All via `nohup … &` with logs in the run root. Only then start
+   thinking about code.
+2. **Overlap by default.** While D0b generation runs on M4 (hours), do
+   D0a on the M1 (minutes), then the D1 datastore code and unit tests.
+   While a screen runs, write the next lever. Check background jobs
+   between tasks, not by waiting.
+3. **Python first, C++ only when it pays.** D0a/D0b simulation uses a
+   pure-Python suffix/n-gram index (or ArcticInference's `simulator.py`
+   if its extension builds on macOS in under 15 minutes — do not fight
+   the build). The C++ tree enters at D1 only if the Python index is
+   measured too slow for the online loop.
+4. **No owner questions.** Every open question gets a recorded default in
+   the run journal and work continues: local daily model =
+   `Qwen3.8-27B-4bit` (second arm), D0 model = `Qwen3-8B-8bit`, the owner
+   runs local models for agentic coding, mlx-dspark is the vehicle. If a
+   result would flip under a different answer, say so in the receipt.
+5. **Corpus extraction once.** Rebuild the owner-trace corpus with full
+   assistant outputs and tool results on the M1 (data stays on the
+   owner's machines), version it, sync the sealed workload to M4, freeze
+   it before any measured run.
+6. **Timeboxes.** D0 verdict within the first session-day. A D1 MVP with
+   the exactness gate passing within the next. Anything that blows its
+   box gets journaled and replaced by the cheapest design that still
+   answers the question.
+7. **Deliverable of a marathon:** Gate D0 verdict with receipts; if GO,
+   the D1 MVP through the exactness gate and a first G1-D screen; NOW.md
+   and the run journal updated so the next session resumes without
+   context. Commit and push at every milestone.
+
 ## Anti-stall rules (binding)
 
 - Two-strike loop-breaker: a third run of the same design needs a written
