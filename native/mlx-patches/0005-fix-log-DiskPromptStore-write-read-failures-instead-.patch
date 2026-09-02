@@ -1,0 +1,49 @@
+From 2c69443ef66d7dd2b2aa485fc29b6a733870c0d2 Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 02:39:08 +0200
+Subject: [PATCH 5/5] fix: log DiskPromptStore write/read failures instead of
+ swallowing them
+
+---
+ mlx_lm/prompt_cache_disk.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+index 1fdd2a6..2fabf0f 100644
+--- a/mlx_lm/prompt_cache_disk.py
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -12,6 +12,7 @@ change never risks feeding a stale KV cache into generation.
+ import copy
+ import hashlib
+ import json
++import logging
+ import queue
+ import threading
+ import time
+@@ -107,6 +108,11 @@ class DiskPromptStore:
+             save_prompt_cache(str(path), entry.prompt_cache)
+             checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+         except Exception:
++            logging.exception(
++                "DiskPromptStore.put: failed to write %s, dropping this entry",
++                path,
++            )
++            path.unlink(missing_ok=True)
+             return
+         row = {
+             "id": entry_id,
+@@ -170,9 +176,11 @@ class DiskPromptStore:
+             return None
+         try:
+             if hashlib.sha256(path.read_bytes()).hexdigest() != row["checksum"]:
++                logging.warning("DiskPromptStore.load: checksum mismatch for %s", path)
+                 return None
+             return load_prompt_cache(str(path))
+         except Exception:
++            logging.exception("DiskPromptStore.load: failed to read %s", path)
+             return None
+ 
+     def touch(self, row: Dict[str, Any]):
+-- 
+2.46.0
+
