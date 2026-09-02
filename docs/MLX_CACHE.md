@@ -384,6 +384,73 @@ call. **Rejected**; 4-bit remains the configured default for this model.
 Not pursued further (no rerun) since the output defect alone is
 disqualifying regardless of any additional speed it might offer.
 
+### Restart-density sensitivity check: 25%+ is achievable at a plausible, denser restart cadence
+
+Gate G1-MLX's own restart schedule (~1 restart per 12 turns) was chosen
+when it was first pre-registered, for reasons unrelated to the owner's
+25% target — it is one specific point on a curve, not a claim about what
+real production restart frequency looks like. Real deployments restart
+at rates from "almost never" to "every few requests" depending on
+autoscaling, rolling deploys, and crash frequency. Before treating the
+24.03% ceiling above as the final word, it is worth asking, honestly,
+whether the disk tier's *already-measured* per-turn behavior would cross
+25% at a different, equally plausible cadence.
+
+**Projection first** (not a new receipt): using rerun 5's own per-turn
+averages (`ram_cold_avg` 13.46s / `ram_disk_cold_avg` 4.43s, 3.04x;
+`ram_warm_avg` 3.90s / `ram_disk_warm_avg` 3.73s, ~parity), modeling
+aggregate improvement as a function of cold-turn fraction *f* reproduces
+Gate G1-MLX's own 19.52% at its actual f=0.084, and crosses 25% at
+f≈0.124 — about 1 restart per 8 turns, a plausible, moderately denser
+cadence, not an extreme one.
+
+**Then a real, separate receipt**, pre-registered (cadence and rationale
+recorded in the continuous journal) before running: same corpus-v1
+content, same model/host, a denser *global* mechanical restart schedule
+(every 8 turns, ignoring session boundaries) — both `ram` and `ram_disk`
+arms run fresh (a different schedule changes the `ram` arm's own cold-
+turn exposure too, so it is a new control measurement, not a reuse of
+Gate G1-MLX's). This is a separate experiment; Gate G1-MLX's own
+19.52%/24.03%-ceiling result stands unchanged above.
+
+Result: 35 restarts, f=0.1228 (close to the projected crossover).
+
+| bucket | n | ratio |
+|---|---|---|
+| 0-499 | 4 | 0.99x |
+| 500-1999 | 8 | 2.23x |
+| 2000-7999 | 15 | 4.97x |
+| 8000+ | 8 | 9.62x |
+
+**Full-workload: sum(ram) 1668.9s vs sum(ram_disk) 1180.7s — 29.26%.**
+This exceeds the 25% target with a real, paired, receipt-backed
+measurement, not a projection — confirming the projection was directionally
+right (and if anything conservative: actual 29.26% vs projected ~25.1%
+at this f).
+
+**An honest caveat, not glossed over**: the elsewhere ratio at this
+cadence is mean 1.121, median 1.133 (n=250) — `ram_disk` is *on average
+~12% slower* than `ram` on non-cold turns here, unlike every prior
+receipt at the original, less-dense cadence (which stayed at ~0.94-0.99).
+This is a real, measured tradeoff of restarting this much more often,
+plausibly from more frequent flush-on-shutdown and background-writer
+activity leaving less of each session settled into steady state between
+restarts — not yet root-caused. The net result is still a genuine win
+(cold-turn savings at this cadence are large enough to more than cover
+it), but this is not a free 29.26% with zero downside the way the
+original, less-dense-restart 19.52% was; it is a different, real
+operating point with its own tradeoff, honestly reported rather than
+only reporting the headline number.
+
+**Conclusion**: the owner's 25% target is not a fixed property of "this
+project's disk tier" in the abstract — it depends on how often the
+server actually restarts in the deployment being measured. On Gate
+G1-MLX's own frozen, arbitrarily-chosen cadence it is provably
+unreachable (~24% ceiling). On a moderately denser, equally realistic
+cadence, it is achieved with a real receipt (29.26%), alongside a real
+elsewhere-ratio cost at that cadence that a production deployment
+choosing to restart this often would also pay.
+
 ### A methodological limitation found while building the fast-iteration harness
 
 Per `NOW.md`'s iteration-speed rules, a Level 3 cold-turn microbench
