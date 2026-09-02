@@ -199,6 +199,31 @@ processing. A measurement on any other hardware is invalid as gate
 evidence. Every receipt records the host, `mlx` and `mlx-lm` versions, and
 the server's `system_fingerprint`.
 
+## Iteration speed rules (binding — a full 3-arm run is ~2.5 h, most of it waste)
+
+- **Do not re-run control arms whose code path did not change.** `no_cache`
+  and `ram` are measured once per (workload, PIN, non-disk patch set) and
+  reused as the reference for every `ram_disk` iteration; record the
+  reference run id in the receipt. Pairing across runs is acceptable for
+  iteration (temperature 0, fixed seed, same host); only the final GO for a
+  phase is confirmed with a fresh simultaneous 3-arm run.
+- **Stress before scale.** Before any multi-hour gate run of a changed
+  mechanism, run a ~10-minute stress scenario built to hit the failure
+  classes seen so far: a pre-populated large disk store (tens of GB, 10+
+  entries) against a deliberately small RAM budget (e.g. 512 MiB), several
+  restarts, eviction on every insert. All three Phase M1 scale bugs were
+  reachable this way; finding them at turn 616 of 858 cost two hours each.
+- **Mini-gate for ladder levers.** Profit-ladder levers are screened on a
+  pre-registered subset (e.g. 4 sessions, 8 restart points, ~20 min)
+  against the reference arms; only levers that pass the screen get the
+  full workload. The subset is fixed once, before screening any lever.
+- **Keep restart overhead out of the measured path.** Model reload
+  (~15-20 s x 72 restarts) is already outside `wall_s`; do not add restarts
+  beyond the pre-registered schedule.
+- **Never wait idle on a run.** While a run executes, do the next item that
+  does not depend on it: cost decomposition of prior data, the next lever's
+  code and tests, doc reconciliation.
+
 ## Anti-stall rules (binding on the executing agent)
 
 - **Two-strike loop-breaker.** The same experiment design may fail or
