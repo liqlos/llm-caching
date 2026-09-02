@@ -1,0 +1,484 @@
+From 532616205474c093d8a2d5fa9044bfee193d107a Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 02:31:17 +0200
+Subject: [PATCH 2/2] feat: persistent disk prompt-cache tier, increment 1
+ (flush/load)
+
+Adds mlx_lm/prompt_cache_disk.py: a DiskPromptStore that serializes
+LRUPromptCache entries to .safetensors files with a JSON index, keyed by a
+fail-closed compatibility key (mlx version, mlx-lm version, system
+fingerprint) -- an incompatible entry is skipped, never loaded, on any
+mismatch.
+
+Wires it into the server behind two new flags, --prompt-cache-dir and
+--prompt-cache-disk-bytes, both off by default (no directory means no disk
+tier):
+
+- flush-on-shutdown: every RAM cache entry is written to disk when the
+  server stops.
+- load-on-start: compatible disk entries for the running model are loaded
+  back into the RAM cache once, right after the model itself loads.
+- SIGTERM now routes through the same shutdown path KeyboardInterrupt
+  already used (serve_forever() only caught SIGINT before this), since a
+  real deployment restart sends SIGTERM and flush-on-shutdown depends on
+  that path running.
+
+LRUPromptCache gains an all_entries() iterator (model, tokens, CacheEntry
+for everything currently held) to support the flush.
+
+This is increment 1 of 3 (NOW.md Phase M1): demote-on-eviction and
+disk-lookup-on-RAM-miss are separate increments on top of this store.
+---
+ mlx_lm/models/cache.py          |   6 ++
+ mlx_lm/prompt_cache_disk.py     | 163 ++++++++++++++++++++++++++++++++
+ mlx_lm/server.py                |  59 +++++++++++-
+ tests/test_prompt_cache_disk.py | 134 ++++++++++++++++++++++++++
+ 4 files changed, 360 insertions(+), 2 deletions(-)
+ create mode 100644 mlx_lm/prompt_cache_disk.py
+ create mode 100644 tests/test_prompt_cache_disk.py
+
+diff --git a/mlx_lm/models/cache.py b/mlx_lm/models/cache.py
+index 176728f..3650b87 100644
+--- a/mlx_lm/models/cache.py
++++ b/mlx_lm/models/cache.py
+@@ -1770,3 +1770,9 @@ class LRUPromptCache:
+                 "n_bytes": self._n_bytes_by_type[cache_type],
+             }
+         return result
++
++    def all_entries(self):
++        """Yield (model, tokens, CacheEntry) for every entry currently held."""
++        for cache_type in self._lru._ordering:
++            for model, tokens in self._lru._lrus[cache_type]:
++                yield model, tokens, self._trie.get(model, tokens)
+diff --git a/mlx_lm/prompt_cache_disk.py b/mlx_lm/prompt_cache_disk.py
+new file mode 100644
+index 0000000..978caab
+--- /dev/null
++++ b/mlx_lm/prompt_cache_disk.py
+@@ -0,0 +1,163 @@
++# Copyright © 2023-2024 Apple Inc.
++
++"""Persistent disk tier for the server's prompt cache.
++
++Stores evicted / shutdown-time KV caches as ``.safetensors`` files next to a
++JSON index. Every entry carries a compatibility key (model identity, mlx /
++mlx-lm versions, system fingerprint); a mismatch on any field makes the
++entry unusable and it is skipped rather than loaded, so a version or model
++change never risks feeding a stale KV cache into generation.
++"""
++
++import hashlib
++import json
++import threading
++import time
++from pathlib import Path
++from typing import Any, Dict, List, Optional, Tuple
++
++from .models.cache import LRUPromptCache, load_prompt_cache, save_prompt_cache
++
++
++class DiskPromptStore:
++    def __init__(
++        self,
++        directory: str,
++        max_bytes: int,
++        mlx_version: str,
++        mlx_lm_version: str,
++        system_fingerprint: str,
++    ):
++        self.dir = Path(directory)
++        self.dir.mkdir(parents=True, exist_ok=True)
++        self.max_bytes = max_bytes
++        self.mlx_version = mlx_version
++        self.mlx_lm_version = mlx_lm_version
++        self.system_fingerprint = system_fingerprint
++        self._index_path = self.dir / "index.json"
++        self._lock = threading.Lock()
++        self._index: List[Dict[str, Any]] = self._read_index()
++
++    def _read_index(self) -> List[Dict[str, Any]]:
++        if self._index_path.exists():
++            try:
++                return json.loads(self._index_path.read_text())
++            except (json.JSONDecodeError, OSError):
++                return []
++        return []
++
++    def _write_index_locked(self):
++        tmp = self._index_path.with_suffix(".tmp")
++        tmp.write_text(json.dumps(self._index))
++        tmp.replace(self._index_path)
++
++    def _is_compatible(self, row: Dict[str, Any]) -> bool:
++        return (
++            row.get("mlx_version") == self.mlx_version
++            and row.get("mlx_lm_version") == self.mlx_lm_version
++            and row.get("system_fingerprint") == self.system_fingerprint
++        )
++
++    @staticmethod
++    def _entry_id(model_key, tokens, cache_type: str) -> str:
++        h = hashlib.sha256()
++        h.update(repr(list(model_key)).encode())
++        h.update(b"\0")
++        h.update(",".join(map(str, tokens)).encode())
++        h.update(b"\0")
++        h.update(cache_type.encode())
++        return h.hexdigest()
++
++    def put(self, model_key, tokens: List[int], entry: "LRUPromptCache.CacheEntry"):
++        """Write one cache entry to disk. Safe to call from a background
++        thread; the caller owns offloading it off the request path."""
++        entry_id = self._entry_id(model_key, tokens, entry.cache_type)
++        path = self.dir / f"{entry_id}.safetensors"
++        try:
++            save_prompt_cache(str(path), entry.prompt_cache)
++            checksum = hashlib.sha256(path.read_bytes()).hexdigest()
++        except Exception:
++            return
++        row = {
++            "id": entry_id,
++            "model_key": list(model_key),
++            "tokens": list(tokens),
++            "cache_type": entry.cache_type,
++            "n_bytes": entry.nbytes,
++            "mlx_version": self.mlx_version,
++            "mlx_lm_version": self.mlx_lm_version,
++            "system_fingerprint": self.system_fingerprint,
++            "checksum": checksum,
++            "last_used": time.time(),
++        }
++        with self._lock:
++            self._index = [r for r in self._index if r["id"] != entry_id]
++            self._index.append(row)
++            self._evict_locked()
++            self._write_index_locked()
++
++    def _evict_locked(self):
++        total = sum(r["n_bytes"] for r in self._index)
++        n_evicted = 0
++        for row in self._index:
++            if total <= self.max_bytes:
++                break
++            (self.dir / f"{row['id']}.safetensors").unlink(missing_ok=True)
++            total -= row["n_bytes"]
++            n_evicted += 1
++        if n_evicted:
++            self._index = self._index[n_evicted:]
++
++    def search(
++        self, model_key, tokens: List[int]
++    ) -> Tuple[Optional[dict], Optional[dict], Optional[dict]]:
++        """Mirrors ``PromptTrie.search``'s exact / shorter / longer
++        semantics, restricted to disk-resident, compatibility-verified
++        entries for this model."""
++        model_key = list(model_key)
++        with self._lock:
++            candidates = [
++                r
++                for r in self._index
++                if r["model_key"] == model_key and self._is_compatible(r)
++            ]
++        exact = shorter = longer = None
++        for row in candidates:
++            row_tokens = row["tokens"]
++            if row_tokens == tokens:
++                exact = row
++            elif len(row_tokens) < len(tokens) and tokens[: len(row_tokens)] == row_tokens:
++                if shorter is None or len(row_tokens) > len(shorter["tokens"]):
++                    shorter = row
++            elif len(row_tokens) > len(tokens) and row_tokens[: len(tokens)] == tokens:
++                if longer is None or len(row_tokens) < len(longer["tokens"]):
++                    longer = row
++        return exact, shorter, longer
++
++    def load(self, row: Dict[str, Any]):
++        path = self.dir / f"{row['id']}.safetensors"
++        if not path.exists():
++            return None
++        try:
++            if hashlib.sha256(path.read_bytes()).hexdigest() != row["checksum"]:
++                return None
++            return load_prompt_cache(str(path))
++        except Exception:
++            return None
++
++    def touch(self, row: Dict[str, Any]):
++        with self._lock:
++            for r in self._index:
++                if r["id"] == row["id"]:
++                    r["last_used"] = time.time()
++                    break
++            self._write_index_locked()
++
++    def all_compatible(self, model_key) -> List[Dict[str, Any]]:
++        model_key = list(model_key)
++        with self._lock:
++            return [
++                r
++                for r in self._index
++                if r["model_key"] == model_key and self._is_compatible(r)
++            ]
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index f0f8c61..d173e60 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -5,6 +5,7 @@ import json
+ import logging
+ import pickle
+ import platform
++import signal
+ import socket
+ import time
+ import uuid
+@@ -41,6 +42,7 @@ from .generate import (
+     stream_generate,
+ )
+ from .models.cache import LRUPromptCache, make_prompt_cache
++from .prompt_cache_disk import DiskPromptStore
+ from .sample_utils import make_logits_processors, make_sampler
+ from .utils import _parse_size, load, sharded_load
+ 
+@@ -417,9 +419,15 @@ def _format_top_logprobs(logprobs, top_n, tokenizer) -> Tuple[Dict[str, Any]]:
+ 
+ 
+ class ResponseGenerator:
+-    def __init__(self, model_provider: ModelProvider, prompt_cache: LRUPromptCache):
++    def __init__(
++        self,
++        model_provider: ModelProvider,
++        prompt_cache: LRUPromptCache,
++        disk_store: Optional[DiskPromptStore] = None,
++    ):
+         self.model_provider = model_provider
+         self.prompt_cache = prompt_cache
++        self.disk_store = disk_store
+         self.requests = Queue()
+         self._state_machine_cache = {}
+ 
+@@ -630,6 +638,19 @@ class ResponseGenerator:
+         # Load the default model if it is given
+         self.model_provider.load_default()
+ 
++        # Rebuild the RAM cache from the disk tier, once, at startup.
++        if self.disk_store is not None and self.model_provider.model_key is not None:
++            for row in self.disk_store.all_compatible(self.model_provider.model_key):
++                cache = self.disk_store.load(row)
++                if cache is None:
++                    continue
++                self.prompt_cache.insert_cache(
++                    tuple(row["model_key"]),
++                    row["tokens"],
++                    cache,
++                    cache_type=row["cache_type"],
++                )
++
+         current_model = None
+         current_sampling = None
+         current_tokenizer = None
+@@ -1694,11 +1715,22 @@ def _run_http_server(
+         "it only implements basic security checks."
+     )
+     logging.info(f"Starting httpd at {host} on port {port}...")
++
++    def _raise_keyboard_interrupt(signum, frame):
++        raise KeyboardInterrupt()
++
++    # A deployment restart sends SIGTERM, not SIGINT: route it through the
++    # same shutdown path (flush-on-shutdown depends on this running).
++    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
++
+     try:
+         httpd.serve_forever()
+     except KeyboardInterrupt:
+         httpd.shutdown()
+         response_generator.stop_and_join()
++        if response_generator.disk_store is not None:
++            for model, tokens, entry in response_generator.prompt_cache.all_entries():
++                response_generator.disk_store.put(model, tokens, entry)
+ 
+ 
+ def run(
+@@ -1715,7 +1747,16 @@ def run(
+     prompt_cache = LRUPromptCache(
+         model_provider.cli_args.prompt_cache_size, **cache_kwargs
+     )
+-    response_generator = ResponseGenerator(model_provider, prompt_cache)
++    disk_store = None
++    if model_provider.cli_args.prompt_cache_dir:
++        disk_store = DiskPromptStore(
++            model_provider.cli_args.prompt_cache_dir,
++            model_provider.cli_args.prompt_cache_disk_bytes,
++            mx.__version__,
++            __version__,
++            get_system_fingerprint(),
++        )
++    response_generator = ResponseGenerator(model_provider, prompt_cache, disk_store)
+     if group.rank() == 0:
+         _run_http_server(host, port, response_generator)
+     else:
+@@ -1853,6 +1894,20 @@ def main():
+         type=_parse_size,
+         help="Maximum size in bytes of the KV caches",
+     )
++    parser.add_argument(
++        "--prompt-cache-dir",
++        type=str,
++        default=None,
++        help="Directory for the persistent disk prompt-cache tier. "
++        "Disabled by default (no directory means no disk tier).",
++    )
++    parser.add_argument(
++        "--prompt-cache-disk-bytes",
++        type=_parse_size,
++        default=_parse_size("20GB"),
++        help="Maximum size in bytes of the disk prompt-cache tier "
++        "(only used with --prompt-cache-dir)",
++    )
+     parser.add_argument(
+         "--pipeline",
+         action="store_true",
+diff --git a/tests/test_prompt_cache_disk.py b/tests/test_prompt_cache_disk.py
+new file mode 100644
+index 0000000..ecbb7ae
+--- /dev/null
++++ b/tests/test_prompt_cache_disk.py
+@@ -0,0 +1,134 @@
++# Copyright © 2024 Apple Inc.
++
++import tempfile
++import unittest
++
++import mlx.core as mx
++
++from mlx_lm.models.cache import KVCache, LRUPromptCache
++from mlx_lm.prompt_cache_disk import DiskPromptStore
++
++
++def make_cache(n_tokens):
++    c = KVCache()
++    c.update_and_fetch(mx.zeros((1, 2, n_tokens, 4)), mx.zeros((1, 2, n_tokens, 4)))
++    mx.eval(c.state)
++    return [c]
++
++
++class TestDiskPromptStore(unittest.TestCase):
++    def setUp(self):
++        self.test_dir_fid = tempfile.TemporaryDirectory()
++        self.test_dir = self.test_dir_fid.name
++
++    def tearDown(self):
++        self.test_dir_fid.cleanup()
++
++    def make_store(self, **kwargs):
++        defaults = dict(
++            max_bytes=10**9,
++            mlx_version="1",
++            mlx_lm_version="2",
++            system_fingerprint="fp",
++        )
++        defaults.update(kwargs)
++        return DiskPromptStore(self.test_dir, **defaults)
++
++    def test_put_load_and_search_semantics(self):
++        store = self.make_store()
++        model_key = ("model-a", None, None)
++        tokens = [1, 2, 3, 4, 5]
++        cache = make_cache(5)
++        entry = LRUPromptCache.CacheEntry(
++            cache, sum(c.nbytes for c in cache), "assistant"
++        )
++        store.put(model_key, tokens, entry)
++
++        exact, shorter, longer = store.search(model_key, tokens)
++        self.assertIsNotNone(exact)
++        self.assertEqual(exact["tokens"], tokens)
++        self.assertIsNone(shorter)
++        self.assertIsNone(longer)
++
++        loaded = store.load(exact)
++        self.assertIsNotNone(loaded)
++        self.assertEqual(loaded[0].offset, 5)
++
++        # A shorter query finds the stored entry as "longer".
++        _, shorter2, longer2 = store.search(model_key, tokens[:3])
++        self.assertIsNone(shorter2)
++        self.assertEqual(longer2["tokens"], tokens)
++
++        # A longer query finds the stored entry as "shorter".
++        _, shorter3, longer3 = store.search(model_key, tokens + [6, 7])
++        self.assertIsNone(longer3)
++        self.assertEqual(shorter3["tokens"], tokens)
++
++    def test_incompatible_entry_is_skipped_fail_closed(self):
++        store = self.make_store()
++        model_key = ("model-a", None, None)
++        tokens = [1, 2, 3]
++        store.put(
++            model_key,
++            tokens,
++            LRUPromptCache.CacheEntry(make_cache(3), 100, "assistant"),
++        )
++
++        # A different mlx-lm version (e.g. after an upgrade) must not match.
++        store2 = self.make_store(mlx_lm_version="3")
++        exact, shorter, longer = store2.search(model_key, tokens)
++        self.assertIsNone(exact)
++        self.assertIsNone(shorter)
++        self.assertIsNone(longer)
++        self.assertEqual(store2.all_compatible(model_key), [])
++
++    def test_eviction_respects_byte_budget(self):
++        store = self.make_store(max_bytes=150)
++        model_key = ("model-a", None, None)
++        store.put(
++            model_key, [1, 2], LRUPromptCache.CacheEntry(make_cache(2), 100, "assistant")
++        )
++        store.put(
++            model_key,
++            [1, 2, 3],
++            LRUPromptCache.CacheEntry(make_cache(3), 100, "assistant"),
++        )
++        rows = store.all_compatible(model_key)
++        self.assertEqual(len(rows), 1)
++        self.assertEqual(rows[0]["tokens"], [1, 2, 3])
++
++    def test_lru_flush_and_reload_round_trip(self):
++        lru = LRUPromptCache(max_size=10)
++        lru.insert_cache(("model-a", None, None), [1, 2, 3], make_cache(3), cache_type="user")
++        # A different, unrelated model_key so the two entries don't collapse
++        # via insert_cache's trimmable-prefix cleanup.
++        lru.insert_cache(
++            ("model-b", None, None),
++            [9, 9, 9, 9, 9],
++            make_cache(5),
++            cache_type="assistant",
++        )
++        self.assertEqual(len(lru), 2)
++
++        store = self.make_store()
++        for model, tokens, entry in lru.all_entries():
++            store.put(model, tokens, entry)
++
++        rows_a = store.all_compatible(("model-a", None, None))
++        rows_b = store.all_compatible(("model-b", None, None))
++        self.assertEqual(len(rows_a), 1)
++        self.assertEqual(len(rows_b), 1)
++
++        lru2 = LRUPromptCache(max_size=10)
++        for row in rows_a + rows_b:
++            cache = store.load(row)
++            lru2.insert_cache(
++                tuple(row["model_key"]), row["tokens"], cache, cache_type=row["cache_type"]
++            )
++        self.assertEqual(len(lru2), 2)
++        _, rest = lru2.fetch_nearest_cache(("model-b", None, None), [9, 9, 9, 9, 9])
++        self.assertEqual(rest, [])
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.46.0
+
