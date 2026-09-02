@@ -371,6 +371,19 @@ require inventing an easier fraction to divide by rather than a real
 speedup — the honest target for the remainder of Phase M2 on this
 workload is closing in on ~24%, not 25%.
 
+### 2-bit quantization — screened and rejected (output quality)
+
+Same infrastructure as the kept 4-bit lever, one config change
+(`--prompt-cache-disk-quantize-bits 2`). Level 2 passed clean (half the
+file size of 4-bit, as expected, no crashes). The same real-model
+(Qwen3-8B) output-quality check 4-bit passed cleanly failed obviously at
+2-bit: the second turn's completion degraded into repetitive garbage
+("Please provide a hash table. Please explain a hash table." repeated
+many times) instead of coherent text — unambiguous, not a borderline
+call. **Rejected**; 4-bit remains the configured default for this model.
+Not pursued further (no rerun) since the output defect alone is
+disqualifying regardless of any additional speed it might offer.
+
 ### A methodological limitation found while building the fast-iteration harness
 
 Per `NOW.md`'s iteration-speed rules, a Level 3 cold-turn microbench
