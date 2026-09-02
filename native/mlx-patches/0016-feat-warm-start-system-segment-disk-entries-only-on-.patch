@@ -1,0 +1,114 @@
+From f701d806d12ab78a4e2ee99cbdfef3b58f0f460d Mon Sep 17 00:00:00 2001
+From: Aleksei Bukhalov <buhaloff.aleks@gmail.com>
+Date: Wed, 2 Sep 2026 13:38:31 +0200
+Subject: [PATCH 16/16] feat: warm-start system-segment disk entries only on
+ restart (Phase M2 lever 2, revised)
+
+Eagerly loads only cache_type=='system' disk entries on restart (real
+startup and the diagnostic simulate_restart both) -- unlike the removed
+bulk restore, these are small and shared across every session by
+construction, so preloading them costs near nothing and closes the
+fresh-session-after-restart gap without the ~2s/restart tax the bulk
+version paid for irrelevant multi-GB conversation entries.
+
+Note (recorded for the receipt, not a code caveat): Gate G1-MLX's own
+corpus-v1 workload sends every turn as a single user-role message (the
+system preamble is baked into that message's own text, not a separate
+system-role field per PHASE0_WORKLOAD_DEFINITION_MLX_V1.md's own design),
+so it never produces a cache_type=='system' entry at all -- confirmed
+directly against rerun 4's completed disk store (12 entries, all
+'assistant', zero 'system'). This lever is correctly implemented and
+inert-safe (a no-op when no system entries exist) but not exercised by
+this specific frozen workload; a full rerun against corpus-v1 would show
+no measurable effect for a workload-structure reason, not a
+lever-ineffectiveness reason, and is not run for that reason.
+---
+ mlx_lm/server.py | 63 +++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 46 insertions(+), 17 deletions(-)
+
+diff --git a/mlx_lm/server.py b/mlx_lm/server.py
+index 817ba14..f5a6561 100644
+--- a/mlx_lm/server.py
++++ b/mlx_lm/server.py
+@@ -446,25 +446,53 @@ class ResponseGenerator:
+     def join(self):
+         self._generation_thread.join()
+ 
++    def _warm_start_system_segments(self):
++        """Eagerly load only `system`-segment disk entries into RAM on
++        restart -- mlx-lm already tags these distinctly, and a system
++        preamble is by nature tiny and shared across every session, unlike
++        a conversation's own growing state. This is the case the removed
++        bulk restore (see _simulate_restart_now) was wrong to lump in with
++        multi-GB conversation entries: those cost real, measured time to
++        preload for no guaranteed benefit, but a small system entry costs
++        near nothing to preload and directly closes the fresh-session-
++        after-restart gap (a brand new session's first request otherwise
++        pays a disk consult it will pay again next restart regardless)."""
++        if self.disk_store is None or self.model_provider.model_key is None:
++            return
++        rows = self.disk_store.all_compatible(self.model_provider.model_key)
++        for row in rows:
++            if row.get("cache_type") != "system":
++                continue
++            cache = self.disk_store.load(row)
++            if cache is None:
++                continue
++            self.prompt_cache.insert_cache(
++                tuple(row["model_key"]), row["tokens"], cache, cache_type="system"
++            )
++
+     def _simulate_restart_now(self):
+-        """Drop the RAM tier. Deliberately does not eagerly reload from the
+-        disk tier: on_miss (LRUPromptCache's on_miss hook, wired to
+-        DiskPromptStore.consult_and_promote) already restores and promotes
+-        whatever a request actually needs, lazily, on that request. An
+-        earlier version of this restore eagerly bulk-loaded disk entries up
+-        to the RAM tier's own byte budget (most-recently-used first) on
+-        every restart; measured directly on M4, that bounded bulk load
+-        itself still cost ~2s per restart (e.g. two ~2GB entries at ~1s
+-        each) for no measurable benefit over the lazy path -- the entries
+-        it preloads are not necessarily the ones the next request needs,
+-        and when they are, on_miss loads that one specific entry in
+-        ~40ms. Removed rather than tuned further, since there was nothing
+-        for it to buy: on_miss is a strict superset in both correctness
+-        and cost. Must only be called from the generation thread: it
+-        shares LRUPromptCache state with every real request without a
+-        lock (by design -- that thread is the sole owner), and MLX needs a
+-        stream bound to whichever thread evaluates any reloaded arrays."""
++        """Drop the RAM tier, then warm-start only its `system`-segment
++        disk entries (see _warm_start_system_segments) -- deliberately does
++        NOT eagerly reload conversation state: on_miss (LRUPromptCache's
++        on_miss hook, wired to DiskPromptStore.consult_and_promote) already
++        restores and promotes whatever a request actually needs, lazily,
++        on that request. An earlier version of this restore eagerly
++        bulk-loaded every disk entry up to the RAM tier's own byte budget
++        (most-recently-used first) on every restart; measured directly on
++        M4, that bounded bulk load itself still cost ~2s per restart (e.g.
++        two ~2GB entries at ~1s each) for no measurable benefit over the
++        lazy path for conversation-sized entries -- the entries it
++        preloaded were not necessarily the ones the next request needed,
++        and when they were, on_miss loads that one specific entry in
++        ~40ms. Removed rather than tuned further for that case; the
++        system-segment case is different in kind (tiny, universally
++        reused, cheap to always have warm) rather than degree. Must only
++        be called from the generation thread: it shares LRUPromptCache
++        state with every real request without a lock (by design -- that
++        thread is the sole owner), and MLX needs a stream bound to
++        whichever thread evaluates any reloaded arrays."""
+         self.prompt_cache.trim_to(n_sequences=0, n_bytes=0)
++        self._warm_start_system_segments()
+ 
+     def request_simulated_restart(self, timeout: float = 60.0):
+         """Diagnostic-only (never gate evidence on its own, per NOW.md):
+@@ -674,6 +702,7 @@ class ResponseGenerator:
+ 
+         # Load the default model if it is given
+         self.model_provider.load_default()
++        self._warm_start_system_segments()
+ 
+         current_model = None
+         current_sampling = None
+-- 
+2.46.0
+
