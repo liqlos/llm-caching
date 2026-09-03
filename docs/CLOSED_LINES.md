@@ -102,6 +102,17 @@ mistakenly claimed until this closure. No divergence between the
 datastore-on and datastore-off arms ever exceeded ~2 bf16 ulps, across 24
 real `Qwen3-8B-8bit` turns in two kernel modes.
 
+**Live confirmation (2026-09-03): the datastore is a net loss live, not
+just marginally unhelpful offline.** A paired live decode-tok/s benchmark
+(`artifacts/mlx/20260902T152845Z-phase-d0-marathon/g1d/`) on 14 varied
+prompts across 6 projects found per-request lookup and lookup+datastore
+both ran at ~0.26x plain decoding — about 4x SLOWER — live, when tuned the
+way the offline no-cost-model acceptance sweep favored. mlx-dspark's own
+shipped DFlash+lookup drafter (no datastore, default settings) reached
+geomean 1.5x (50% faster) on the same prompts, confirming a real,
+reproduced live speedup exists on this host and model — delivered
+entirely by code this project did not write.
+
 **One real, general lever surfaced and was declined.** Verify cost at long
 context runs ~34% above a bandwidth-bound floor at 16k tokens (each extra
 verify row re-reads nearly the full KV cache) — a property of Apple

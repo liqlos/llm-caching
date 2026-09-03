@@ -6,6 +6,39 @@ in the tree (`PCSS_PRODUCT.md`, `M4_RUNBOOK.md`, `qualification/`, the
 `llamacpp_*` / `exact_prompt_*` / `live_server_*` lab modules) is historical
 prior art and binds nothing.
 
+## Addendum (2026-09-03, live speedup verified)
+
+The owner asked, correctly, whether a real >=25% speedup had actually been
+demonstrated live on varied prompts, rather than inferred from an offline
+acceptance-rate replay. It had not; this addendum closes that gap.
+
+**Answer: yes, real and reproduced twice, but not from anything this
+project built.** A live, paired decode-tok/s benchmark
+(`g1d/live_speedup_benchmark.py`, receipt at `g1d/LIVE_SPEEDUP_RECEIPT.md`)
+on the real D0 target, 14 varied prompts across 6 projects (context
+414-11,551 tokens): mlx-dspark's own shipped DFlash+lookup hybrid drafter
+(default settings, no datastore) measured **geomean 1.501x (50% faster)**,
+10/14 prompts at or above 1.25x. An independent first run (12 prompts, 2
+mildly contaminated by an unrelated host process) agreed in order of
+magnitude at 1.395x geomean.
+
+**This project's own contribution -- per-request n-gram lookup and the
+persistent datastore -- is a clean NET LOSS live**, geomean ~0.26x (about
+4x slower than plain decoding) in both runs, zero of 26 paired
+measurements beating baseline. The `ngram_min=1` policy the offline D0
+algorithm sweep favored (+15.6% raw accepted-tokens-per-round with no cost
+model) is a large net loss once the real, context-dependent verify cost is
+paid on every mostly-rejected round. This is the clearest evidence in this
+project's history that a raw-acceptance metric without a cost model can
+rank a drafting policy backwards relative to live wall-clock.
+
+**Consequence for the closure below: unchanged, reinforced.** The real,
+working speedup this host already delivers comes entirely from
+mlx-dspark's own shipped drafter, which required no engineering from this
+project. Nothing here reopens Line D -- it sharpens why it is closed: the
+datastore doesn't just fail to add enough marginal value (Gate D0), it
+actively hurts live throughput under the policy that looked best offline.
+
 ## Status (2026-09-03, Line D closed)
 
 **Line D is closed.** Gate D0 (throughput) was NO_GO, the exactness gate
